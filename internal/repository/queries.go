@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/Leon180/workingbad/internal/domain"
 )
@@ -63,8 +62,12 @@ func (s *Service) ListEntries(ctx context.Context, filter ListFilter) ([]domain.
 		e.Status = domain.Status(status)
 		e.IsCurrent = isCur == 1
 		e.SupersededBy = supBy
-		e.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
-		e.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
+		if e.CreatedAt, err = parseRFC(created); err != nil {
+			return nil, fmt.Errorf("repository: parse entry %s created_at: %w", e.ID, err)
+		}
+		if e.UpdatedAt, err = parseRFC(updated); err != nil {
+			return nil, fmt.Errorf("repository: parse entry %s updated_at: %w", e.ID, err)
+		}
 		out = append(out, e)
 	}
 	return out, rows.Err()
@@ -99,7 +102,11 @@ func (s *Service) GetGoalActivities(ctx context.Context, goalID string) ([]domai
 	}
 	out := make([]domain.Entry, len(rows))
 	for i, r := range rows {
-		out[i] = entryFromSqlc(r)
+		converted, cerr := entryFromSqlc(r)
+		if cerr != nil {
+			return nil, cerr
+		}
+		out[i] = converted
 	}
 	return out, nil
 }

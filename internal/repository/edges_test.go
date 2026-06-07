@@ -248,5 +248,9 @@ func setupGoalAndActivity(t *testing.T, s *Service) (domain.Entry, domain.Entry)
 	if err != nil {
 		t.Fatalf("load activity: %v", err)
 	}
-	return goal, entryFromSqlc(row)
+	activity, err := entryFromSqlc(row)
+	if err != nil {
+		t.Fatalf("convert activity: %v", err)
+	}
+	return goal, activity
 }

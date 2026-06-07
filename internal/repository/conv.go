@@ -2,6 +2,8 @@ package repository
 
 import (
 	"database/sql"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/Leon180/workingbad/internal/domain"
@@ -13,7 +15,21 @@ import (
 // types (plain string / bool / time.Time, with empty string standing in
 // for NULL). All boundary conversion lives here.
 
-func entryFromSqlc(e sqlcdb.Entry) domain.Entry {
+// ErrZeroTime is returned by formatRFC when given a zero time.Time. The
+// previous behaviour silently substituted time.Now(); this was P0 silent
+// corruption and is now refused at the boundary. Callers that legitimately
+// want "now" must pass time.Now().UTC() explicitly.
+var ErrZeroTime = errors.New("repository: refuse to format zero time as RFC3339Nano")
+
+func entryFromSqlc(e sqlcdb.Entry) (domain.Entry, error) {
+	created, err := parseRFC(e.CreatedAt)
+	if err != nil {
+		return domain.Entry{}, fmt.Errorf("entry %s created_at: %w", e.ID, err)
+	}
+	updated, err := parseRFC(e.UpdatedAt)
+	if err != nil {
+		return domain.Entry{}, fmt.Errorf("entry %s updated_at: %w", e.ID, err)
+	}
 	return domain.Entry{
 		ID:           e.ID,
 		LogicalID:    e.LogicalID,
@@ -29,12 +45,16 @@ func entryFromSqlc(e sqlcdb.Entry) domain.Entry {
 		IsCurrent:    e.IsCurrent == 1,
 		SupersededBy: nsToString(e.SupersededBy),
 		Metadata:     e.Metadata,
-		CreatedAt:    parseRFC(e.CreatedAt),
-		UpdatedAt:    parseRFC(e.UpdatedAt),
-	}
+		CreatedAt:    created,
+		UpdatedAt:    updated,
+	}, nil
 }
 
-func edgeFromSqlc(e sqlcdb.Edge) domain.Edge {
+func edgeFromSqlc(e sqlcdb.Edge) (domain.Edge, error) {
+	created, err := parseRFC(e.CreatedAt)
+	if err != nil {
+		return domain.Edge{}, fmt.Errorf("edge %s created_at: %w", e.ID, err)
+	}
 	return domain.Edge{
 		ID:           e.ID,
 		FromID:       e.FromID,
@@ -43,23 +63,35 @@ func edgeFromSqlc(e sqlcdb.Edge) domain.Edge {
 		IsCurrent:    e.IsCurrent == 1,
 		SupersededBy: nsToString(e.SupersededBy),
 		Metadata:     e.Metadata,
-		CreatedAt:    parseRFC(e.CreatedAt),
-	}
+		CreatedAt:    created,
+	}, nil
 }
 
-func rawChangeFromSqlc(r sqlcdb.RawChange) domain.RawChange {
+func rawChangeFromSqlc(r sqlcdb.RawChange) (domain.RawChange, error) {
+	created, err := parseRFC(r.CreatedAt)
+	if err != nil {
+		return domain.RawChange{}, fmt.Errorf("raw_change %s created_at: %w", r.ChangeID, err)
+	}
 	return domain.RawChange{
 		ChangeID:  r.ChangeID,
 		RepoID:    r.RepoID,
 		PatchID:   nsToString(r.PatchID),
-		CreatedAt: parseRFC(r.CreatedAt),
-	}
+		CreatedAt: created,
+	}, nil
 }
 
-func entryToInsertParams(e domain.Entry) sqlcdb.InsertEntryRowParams {
+func entryToInsertParams(e domain.Entry) (sqlcdb.InsertEntryRowParams, error) {
 	metadata := e.Metadata
 	if metadata == "" {
 		metadata = "{}"
+	}
+	created, err := formatRFC(e.CreatedAt)
+	if err != nil {
+		return sqlcdb.InsertEntryRowParams{}, fmt.Errorf("entry %s created_at: %w", e.ID, err)
+	}
+	updated, err := formatRFC(e.UpdatedAt)
+	if err != nil {
+		return sqlcdb.InsertEntryRowParams{}, fmt.Errorf("entry %s updated_at: %w", e.ID, err)
 	}
 	return sqlcdb.InsertEntryRowParams{
 		ID:           e.ID,
@@ -76,9 +108,9 @@ func entryToInsertParams(e domain.Entry) sqlcdb.InsertEntryRowParams {
 		IsCurrent:    boolToI64(e.IsCurrent),
 		SupersededBy: stringToNS(e.SupersededBy),
 		Metadata:     metadata,
-		CreatedAt:    formatRFC(e.CreatedAt),
-		UpdatedAt:    formatRFC(e.UpdatedAt),
-	}
+		CreatedAt:    created,
+		UpdatedAt:    updated,
+	}, nil
 }
 
 // Small helpers.
@@ -104,14 +136,30 @@ func boolToI64(b bool) int64 {
 	return 0
 }
 
-func parseRFC(s string) time.Time {
-	t, _ := time.Parse(time.RFC3339Nano, s)
-	return t
+// parseRFC parses an RFC3339Nano string into a time.Time. Empty strings are
+// treated as a hard error: NOT NULL columns should never produce empty values
+// downstream, and an empty value would round-trip to a zero time and then back
+// to time.Now() under the old formatRFC behaviour — exactly the silent
+// corruption pattern this fix exists to prevent.
+func parseRFC(s string) (time.Time, error) {
+	if s == "" {
+		return time.Time{}, errors.New("repository: empty RFC3339Nano string")
+	}
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("repository: parse RFC3339Nano %q: %w", s, err)
+	}
+	return t, nil
 }
 
-func formatRFC(t time.Time) string {
+// formatRFC formats a time.Time as RFC3339Nano in UTC. Zero times return
+// ErrZeroTime — this is intentional. The previous fallback to time.Now() was
+// P0 silent corruption: a caller forgetting to stamp a time would silently
+// get the ingestion time written as if it were a real event timestamp. Callers
+// that genuinely want server-now must pass time.Now().UTC() explicitly.
+func formatRFC(t time.Time) (string, error) {
 	if t.IsZero() {
-		return time.Now().UTC().Format(time.RFC3339Nano)
+		return "", ErrZeroTime
 	}
-	return t.UTC().Format(time.RFC3339Nano)
+	return t.UTC().Format(time.RFC3339Nano), nil
 }

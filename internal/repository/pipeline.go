@@ -35,6 +35,16 @@ func (s *Service) UpsertRaw(ctx context.Context, rc domain.RawCommit, patchID st
 	if rc.RepoID == "" {
 		return domain.RawChange{}, errors.New("repository: UpsertRaw requires repo_id")
 	}
+	// A git commit without an author time is invalid data, not recoverable.
+	// The previous formatRFC silent-now fallback masked this; making it loud
+	// here closes the path that would have written ingestion time into the
+	// author_time column (which downstream bitemporal work reads as event time).
+	if rc.AuthorTime.IsZero() {
+		return domain.RawChange{}, errors.New("repository: UpsertRaw requires non-zero author_time")
+	}
+	if rc.CommitTime.IsZero() {
+		return domain.RawChange{}, errors.New("repository: UpsertRaw requires non-zero commit_time")
+	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -53,7 +63,11 @@ func (s *Service) UpsertRaw(ctx context.Context, rc domain.RawCommit, patchID st
 		if cerr := tx.Commit(); cerr != nil {
 			return domain.RawChange{}, cerr
 		}
-		return rawChangeFromSqlc(change), nil
+		converted, cerr := rawChangeFromSqlc(change)
+		if cerr != nil {
+			return domain.RawChange{}, cerr
+		}
+		return converted, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return domain.RawChange{}, fmt.Errorf("repository: lookup sha: %w", err)
@@ -92,11 +106,15 @@ func (s *Service) UpsertRaw(ctx context.Context, rc domain.RawCommit, patchID st
 		}
 		change.ChangeID = id.String()
 		change.CreatedAt = time.Now().UTC()
+		createdRFC, ferr := formatRFC(change.CreatedAt)
+		if ferr != nil {
+			return domain.RawChange{}, fmt.Errorf("repository: format change created_at: %w", ferr)
+		}
 		if err := qtx.InsertRawChange(ctx, sqlcdb.InsertRawChangeParams{
 			ChangeID:  change.ChangeID,
 			RepoID:    change.RepoID,
 			PatchID:   stringToNS(change.PatchID),
-			CreatedAt: formatRFC(change.CreatedAt),
+			CreatedAt: createdRFC,
 		}); err != nil {
 			return domain.RawChange{}, fmt.Errorf("repository: insert raw_change: %w", err)
 		}
@@ -106,7 +124,10 @@ func (s *Service) UpsertRaw(ctx context.Context, rc domain.RawCommit, patchID st
 		if err != nil {
 			return domain.RawChange{}, err
 		}
-		change = rawChangeFromSqlc(ch)
+		change, err = rawChangeFromSqlc(ch)
+		if err != nil {
+			return domain.RawChange{}, err
+		}
 	}
 
 	// 3) Insert raw_commits.
@@ -121,21 +142,33 @@ func (s *Service) UpsertRaw(ctx context.Context, rc domain.RawCommit, patchID st
 		}
 		parents = string(b)
 	}
+	authorRFC, err := formatRFC(rc.AuthorTime)
+	if err != nil {
+		return domain.RawChange{}, fmt.Errorf("repository: format author_time: %w", err)
+	}
+	commitRFC, err := formatRFC(rc.CommitTime)
+	if err != nil {
+		return domain.RawChange{}, fmt.Errorf("repository: format commit_time: %w", err)
+	}
+	rcCreatedRFC, err := formatRFC(rc.CreatedAt)
+	if err != nil {
+		return domain.RawChange{}, fmt.Errorf("repository: format raw_commit created_at: %w", err)
+	}
 	if err := qtx.InsertRawCommit(ctx, sqlcdb.InsertRawCommitParams{
 		Sha:          rc.SHA,
 		RepoID:       rc.RepoID,
 		ChangeID:     change.ChangeID,
 		ParentShas:   parents,
 		Author:       rc.Author,
-		AuthorTime:   formatRFC(rc.AuthorTime),
+		AuthorTime:   authorRFC,
 		Committer:    rc.Committer,
-		CommitTime:   formatRFC(rc.CommitTime),
+		CommitTime:   commitRFC,
 		Message:      rc.Message,
 		Diff:         stringToNS(rc.Diff),
 		BranchHint:   stringToNS(rc.BranchHint),
 		IsCurrent:    1,
 		SupersededBy: stringToNS(rc.SupersededBy),
-		CreatedAt:    formatRFC(rc.CreatedAt),
+		CreatedAt:    rcCreatedRFC,
 	}); err != nil {
 		return domain.RawChange{}, fmt.Errorf("repository: insert raw_commit: %w", err)
 	}
@@ -185,6 +218,14 @@ func (s *Service) UpsertSegment(ctx context.Context, seg domain.Segment) (domain
 		if seg.Metadata == "" {
 			seg.Metadata = "{}"
 		}
+		createdRFC, ferr := formatRFC(seg.CreatedAt)
+		if ferr != nil {
+			return domain.Segment{}, fmt.Errorf("repository: format segment created_at: %w", ferr)
+		}
+		updatedRFC, ferr := formatRFC(seg.UpdatedAt)
+		if ferr != nil {
+			return domain.Segment{}, fmt.Errorf("repository: format segment updated_at: %w", ferr)
+		}
 		if err := qtx.InsertSegment(ctx, sqlcdb.InsertSegmentParams{
 			ID:            seg.ID,
 			RepoID:        seg.RepoID,
@@ -193,8 +234,8 @@ func (s *Service) UpsertSegment(ctx context.Context, seg domain.Segment) (domain
 			SummaryState:  string(seg.SummaryState),
 			AnchorPatchID: stringToNS(seg.AnchorPatchID),
 			Metadata:      seg.Metadata,
-			CreatedAt:     formatRFC(seg.CreatedAt),
-			UpdatedAt:     formatRFC(seg.UpdatedAt),
+			CreatedAt:     createdRFC,
+			UpdatedAt:     updatedRFC,
 		}); err != nil {
 			return domain.Segment{}, fmt.Errorf("repository: insert segment: %w", err)
 		}
@@ -203,17 +244,25 @@ func (s *Service) UpsertSegment(ctx context.Context, seg domain.Segment) (domain
 	default:
 		seg.ID = existing.ID
 		if seg.CreatedAt.IsZero() {
-			seg.CreatedAt = parseRFC(existing.CreatedAt)
+			parsed, perr := parseRFC(existing.CreatedAt)
+			if perr != nil {
+				return domain.Segment{}, fmt.Errorf("repository: parse existing segment created_at: %w", perr)
+			}
+			seg.CreatedAt = parsed
 		}
 		metaArg := seg.Metadata
 		if metaArg == "" {
 			metaArg = "{}"
 		}
+		updatedRFC, ferr := formatRFC(seg.UpdatedAt)
+		if ferr != nil {
+			return domain.Segment{}, fmt.Errorf("repository: format segment updated_at: %w", ferr)
+		}
 		if err := qtx.UpdateSegment(ctx, sqlcdb.UpdateSegmentParams{
 			SummaryState:  string(seg.SummaryState),
 			AnchorPatchID: stringToNS(seg.AnchorPatchID),
 			Metadata:      metaArg,
-			UpdatedAt:     formatRFC(seg.UpdatedAt),
+			UpdatedAt:     updatedRFC,
 			ID:            seg.ID,
 		}); err != nil {
 			return domain.Segment{}, fmt.Errorf("repository: update segment: %w", err)
@@ -294,11 +343,15 @@ func (s *Service) materializeOne(ctx context.Context, seg domain.Segment, provid
 	}
 	changes := make([]domain.RawChange, len(rawRows))
 	for i, r := range rawRows {
+		created, perr := parseRFC(r.CreatedAt)
+		if perr != nil {
+			return fmt.Errorf("repository: parse raw_change %s created_at: %w", r.ChangeID, perr)
+		}
 		changes[i] = domain.RawChange{
 			ChangeID:  r.ChangeID,
 			RepoID:    r.RepoID,
 			PatchID:   nsToString(r.PatchID),
-			CreatedAt: parseRFC(r.CreatedAt),
+			CreatedAt: created,
 		}
 	}
 
@@ -334,9 +387,13 @@ func (s *Service) materializeOne(ctx context.Context, seg domain.Segment, provid
 		}
 	}
 
+	updatedRFC, ferr := formatRFC(time.Now().UTC())
+	if ferr != nil {
+		return fmt.Errorf("repository: format mark-materialized now: %w", ferr)
+	}
 	if err := qtx.MarkSegmentMaterialized(ctx, sqlcdb.MarkSegmentMaterializedParams{
 		SummaryState: string(domain.SummaryStateMaterialized),
-		UpdatedAt:    formatRFC(time.Now().UTC()),
+		UpdatedAt:    updatedRFC,
 		ID:           seg.ID,
 	}); err != nil {
 		return fmt.Errorf("repository: mark materialized: %w", err)
@@ -352,7 +409,11 @@ func (s *Service) insertEntryInTx(ctx context.Context, qtx *sqlcdb.Queries, e *d
 	}
 	stampTimes(e, time.Now().UTC())
 	e.IsCurrent = true
-	if err := qtx.InsertEntryRow(ctx, entryToInsertParams(*e)); err != nil {
+	params, err := entryToInsertParams(*e)
+	if err != nil {
+		return fmt.Errorf("repository: marshal entry: %w", err)
+	}
+	if err := qtx.InsertEntryRow(ctx, params); err != nil {
 		return fmt.Errorf("repository: insert entry: %w", err)
 	}
 	if err := qtx.InsertEntryFTS(ctx, sqlcdb.InsertEntryFTSParams{
@@ -387,9 +448,13 @@ func (s *Service) supersedeEntryInTx(ctx context.Context, qtx *sqlcdb.Queries, o
 	stampTimes(replacement, now)
 	replacement.IsCurrent = true
 
+	nowRFC, ferr := formatRFC(now)
+	if ferr != nil {
+		return fmt.Errorf("repository: format supersede now: %w", ferr)
+	}
 	if err := qtx.FlipEntrySuperseded(ctx, sqlcdb.FlipEntrySupersededParams{
 		SupersededBy: stringToNS(replacement.ID),
-		UpdatedAt:    formatRFC(now),
+		UpdatedAt:    nowRFC,
 		ID:           oldID,
 	}); err != nil {
 		return fmt.Errorf("repository: flip superseded: %w", err)
@@ -397,7 +462,11 @@ func (s *Service) supersedeEntryInTx(ctx context.Context, qtx *sqlcdb.Queries, o
 	if err := qtx.DeleteEntryFTS(ctx, oldID); err != nil {
 		return fmt.Errorf("repository: drop superseded fts: %w", err)
 	}
-	if err := qtx.InsertEntryRow(ctx, entryToInsertParams(*replacement)); err != nil {
+	replacementParams, ferr := entryToInsertParams(*replacement)
+	if ferr != nil {
+		return fmt.Errorf("repository: marshal replacement: %w", ferr)
+	}
+	if err := qtx.InsertEntryRow(ctx, replacementParams); err != nil {
 		return fmt.Errorf("repository: insert replacement: %w", err)
 	}
 	if err := qtx.InsertEntryFTS(ctx, sqlcdb.InsertEntryFTSParams{
@@ -441,8 +510,14 @@ func (s *Service) listSegmentsNeedingMaterialize(ctx context.Context, scope Mate
 		}
 		seg.Source = domain.Source(src)
 		seg.SummaryState = domain.SummaryState(state)
-		seg.CreatedAt = parseRFC(created)
-		seg.UpdatedAt = parseRFC(updated)
+		seg.CreatedAt, err = parseRFC(created)
+		if err != nil {
+			return nil, fmt.Errorf("repository: parse segment %s created_at: %w", seg.ID, err)
+		}
+		seg.UpdatedAt, err = parseRFC(updated)
+		if err != nil {
+			return nil, fmt.Errorf("repository: parse segment %s updated_at: %w", seg.ID, err)
+		}
 		out = append(out, seg)
 	}
 	return out, rows.Err()

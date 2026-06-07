@@ -53,7 +53,11 @@ func (s *Service) InsertEntry(ctx context.Context, e domain.Entry) (domain.Entry
 	defer func() { _ = tx.Rollback() }()
 
 	qtx := s.q.WithTx(tx)
-	if err := qtx.InsertEntryRow(ctx, entryToInsertParams(e)); err != nil {
+	params, err := entryToInsertParams(e)
+	if err != nil {
+		return domain.Entry{}, fmt.Errorf("repository: marshal entry: %w", err)
+	}
+	if err := qtx.InsertEntryRow(ctx, params); err != nil {
 		return domain.Entry{}, fmt.Errorf("repository: insert entry: %w", err)
 	}
 	if err := qtx.InsertEntryFTS(ctx, sqlcdb.InsertEntryFTSParams{

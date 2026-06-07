@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/urfave/cli/v3"
 
@@ -196,9 +197,11 @@ func seedSegmentForJourney(t *testing.T, ctx context.Context, dbPath, repo, sour
 	}); err != nil {
 		t.Fatalf("UpsertSegment: %v", err)
 	}
+	now := time.Now().UTC()
 	ch, err := svc.UpsertRaw(ctx, domain.RawCommit{
 		SHA: sha, RepoID: repo,
 		Author: "alice", Committer: "alice",
+		AuthorTime: now, CommitTime: now,
 		Message: "journey commit",
 	}, patchID)
 	if err != nil {
