@@ -3,7 +3,7 @@ package repository
 import (
 	"testing"
 
-	"github.com/Leon180/workingbad/internal/ai/mock"
+	"github.com/Leon180/workingbad/internal/adapters/ai/mock"
 	"github.com/Leon180/workingbad/internal/domain"
 )
 

@@ -12,8 +12,8 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/Leon180/workingbad/internal/ai"
 	"github.com/Leon180/workingbad/internal/domain"
+	"github.com/Leon180/workingbad/internal/ports/ai"
 )
 
 // SummarizeFunc / ClassifyFunc / RelateFunc are the swappable hook
