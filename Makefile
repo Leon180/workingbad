@@ -20,7 +20,7 @@ lint:
 	golangci-lint run $(PKG)
 
 fmt:
-	goimports -w .
+	goimports -local github.com/Leon180/workingbad -w .
 	gofmt -s -w .
 
 tidy:

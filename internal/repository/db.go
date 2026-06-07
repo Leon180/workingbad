@@ -8,8 +8,9 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/Leon180/workingbad/internal/migrations"
 	_ "modernc.org/sqlite" // database/sql driver registration
+
+	"github.com/Leon180/workingbad/internal/migrations"
 )
 
 // Open opens the SQLite database at path, applies recommended PRAGMAs,

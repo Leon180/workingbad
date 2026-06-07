@@ -58,11 +58,11 @@ const (
 type Relation string
 
 const (
-	RelationRelatesTo    Relation = "relates_to"
-	RelationDerivedFrom  Relation = "derived_from"
-	RelationBlocks       Relation = "blocks"
-	RelationPartOf       Relation = "part_of"
-	RelationIterationOf  Relation = "iteration_of"
+	RelationRelatesTo   Relation = "relates_to"
+	RelationDerivedFrom Relation = "derived_from"
+	RelationBlocks      Relation = "blocks"
+	RelationPartOf      Relation = "part_of"
+	RelationIterationOf Relation = "iteration_of"
 )
 
 // SummaryState is the segment lifecycle.

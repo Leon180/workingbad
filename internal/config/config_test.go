@@ -22,7 +22,10 @@ func TestSecret_Redaction(t *testing.T) {
 	if got := s.String(); got != "[REDACTED]" {
 		t.Errorf("String() = %q, want [REDACTED]", got)
 	}
-	if got := fmt.Sprintf("%s", s); got != "[REDACTED]" {
+	// Testing the fmt.Stringer-via-%s path is the point — that's where real
+	// accidental log leaks happen. staticcheck would suggest s.String() but
+	// that defeats the regression guard.
+	if got := fmt.Sprintf("%s", s); got != "[REDACTED]" { //nolint:staticcheck // intentional %s path
 		t.Errorf("fmt %%s = %q, want [REDACTED]", got)
 	}
 	if got := fmt.Sprintf("%v", s); got != "[REDACTED]" {

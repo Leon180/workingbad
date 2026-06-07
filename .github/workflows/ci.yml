@@ -40,7 +40,9 @@ jobs:
           cache: true
       - uses: golangci/golangci-lint-action@v6
         with:
-          version: v1.62.2
+          # Must be built with Go ≥ 1.25 to match go.mod (validator dragged
+          # the toolchain up). v2.x ships with Go 1.25.
+          version: latest
 
   migration-gates:
     name: migration discipline (3 gates)

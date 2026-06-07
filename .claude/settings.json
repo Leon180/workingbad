@@ -40,7 +40,14 @@
       "Bash(git add *)",
       "Bash(gh repo *)",
       "Bash(git checkout *)",
-      "Bash(git reset *)"
+      "Bash(git reset *)",
+      "Bash(git push *)",
+      "Bash(git remote *)",
+      "Bash(golangci-lint version *)",
+      "Bash(golangci-lint run *)",
+      "Bash(echo \"lint exit=$?\")",
+      "Bash(goimports -local github.com/Leon180/workingbad -w .)",
+      "Bash(gofmt -s -w .)"
     ]
   }
 }
