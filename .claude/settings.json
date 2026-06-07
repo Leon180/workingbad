@@ -64,7 +64,8 @@
       "Edit(/.claude/skills/go-single-binary-ci/**)",
       "Edit(/.claude/skills/golang-performance/**)",
       "Bash(goimports -local github.com/Leon180/workingbad -w cmd/workingbad/)",
-      "Bash(gofmt -s -w cmd/workingbad/)"
+      "Bash(gofmt -s -w cmd/workingbad/)",
+      "Bash(rtk wc *)"
     ]
   }
 }

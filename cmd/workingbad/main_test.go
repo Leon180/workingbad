@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,10 @@ import (
 	"testing"
 
 	"github.com/urfave/cli/v3"
+
+	"github.com/Leon180/workingbad/internal/adapters/ai/mock"
+	"github.com/Leon180/workingbad/internal/domain"
+	"github.com/Leon180/workingbad/internal/repository"
 )
 
 // CLI smoke tests: drive workingbad through a realistic dogfooding flow
@@ -94,6 +99,200 @@ func TestCLI_ListEmpty(t *testing.T) {
 		t.Errorf("empty list should say '(no entries)', got %q", stdout)
 	}
 }
+
+// TestCLI_Journey_AttachThenReSummarizePreservesGoalView is the scripted
+// dogfooding regression: a multi-step engineer flow that single-action
+// tests can't catch. Specifically guards the P0 rePoint fix — if anyone
+// in the future removes rePointAllLiveEdges from supersedeEntryInTx, this
+// test fails immediately.
+//
+// Flow:
+//  1. engineer creates a goal via CLI
+//  2. engineer's git work is ingested + materialized (we drive this through
+//     the service directly because there's no CLI for ingest yet, Phase 2)
+//  3. engineer attaches the activity to the goal via CLI
+//  4. the segment goes stale (new commits arrive) and is re-summarised via CLI
+//  5. CORE ASSERTION: GetGoalActivities still finds the new activity
+//  6. engineer marks the goal done via CLI
+//  7. SECOND ASSERTION: the new (superseded) goal still sees the activity
+func TestCLI_Journey_AttachThenReSummarizePreservesGoalView(t *testing.T) {
+	cfgPath, dbPath := setupRun(t)
+	ctx := context.Background()
+
+	// Step 1: engineer creates goal via CLI.
+	out := captureStdout(t, func() error {
+		return runCLI(cfgPath, "goal", "Ship v0.1.0")
+	})
+	goalID := mustExtractCreatedID(t, out, "goal")
+
+	// Step 2: simulate git ingest using the repository service directly.
+	// (No CLI sub-command for git ingest yet — that's Phase 2.)
+	seedSegmentForJourney(t, ctx, dbPath, "repo-1", "ref-journey", "patch-journey", "sha-journey")
+
+	// Materialise via CLI to prove the CLI path works.
+	out = captureStdout(t, func() error {
+		return runCLI(cfgPath, "summarize")
+	})
+	if !strings.Contains(out, "materialized: 1") {
+		t.Fatalf("first summarize: %q", out)
+	}
+	activityID := getLiveActivityIDByRef(t, dbPath, "ref-journey")
+
+	// Step 3: attach via CLI.
+	out = captureStdout(t, func() error {
+		return runCLI(cfgPath, "attach", activityID, goalID)
+	})
+	if !strings.Contains(out, "attached edge") {
+		t.Fatalf("attach: %q", out)
+	}
+
+	// Step 4: mark segment stale and re-summarise.
+	markSegmentStale(t, dbPath, "ref-journey")
+	out = captureStdout(t, func() error {
+		return runCLI(cfgPath, "summarize")
+	})
+	if !strings.Contains(out, "materialized: 1") {
+		t.Fatalf("re-summarize: %q", out)
+	}
+
+	// Step 5: CORE P0 assertion — goal still sees an attached activity.
+	got := goalActivities(t, ctx, dbPath, goalID)
+	if len(got) != 1 {
+		t.Fatalf("P0 REGRESSION: after re-summarise the goal lost its activity. got %d activities, want 1", len(got))
+	}
+	if got[0].ID == activityID {
+		t.Errorf("got the old activity %q back; expected the newly-materialised replacement", activityID)
+	}
+
+	// Step 6: status → done via CLI.
+	out = captureStdout(t, func() error {
+		return runCLI(cfgPath, "status", goalID, "done")
+	})
+	if !strings.Contains(out, "status=done") {
+		t.Errorf("status output: %q", out)
+	}
+
+	// Step 7: SECOND assertion — the new live goal (after supersede) still
+	// sees the activity. Look it up via LogicalID chain.
+	newGoalID := currentEntryByLogicalID(t, dbPath, goalID)
+	got = goalActivities(t, ctx, dbPath, newGoalID)
+	if len(got) != 1 {
+		t.Errorf("after status change: new goal lost the activity (re-point regression on goal-supersede): got %d", len(got))
+	}
+}
+
+// --- journey-test helpers (kept here so they're easy to read alongside the test) ---
+
+func seedSegmentForJourney(t *testing.T, ctx context.Context, dbPath, repo, sourceRef, patchID, sha string) {
+	t.Helper()
+	svc, closeSvc := openServiceFor(t, dbPath)
+	defer closeSvc()
+
+	if _, err := svc.UpsertSegment(ctx, domain.Segment{
+		RepoID:        repo,
+		Source:        domain.SourceGit,
+		SourceRef:     sourceRef,
+		AnchorPatchID: patchID,
+	}); err != nil {
+		t.Fatalf("UpsertSegment: %v", err)
+	}
+	ch, err := svc.UpsertRaw(ctx, domain.RawCommit{
+		SHA: sha, RepoID: repo,
+		Author: "alice", Committer: "alice",
+		Message: "journey commit",
+	}, patchID)
+	if err != nil {
+		t.Fatalf("UpsertRaw: %v", err)
+	}
+	segID := getSegmentIDByRef(t, dbPath, sourceRef)
+	if err := svc.LinkSegmentRaw(ctx, segID, ch.ChangeID); err != nil {
+		t.Fatalf("LinkSegmentRaw: %v", err)
+	}
+}
+
+func openServiceFor(t *testing.T, dbPath string) (*repository.Service, func()) {
+	t.Helper()
+	db, err := repository.Open(dbPath)
+	if err != nil {
+		t.Fatalf("repository.Open: %v", err)
+	}
+	return repository.NewService(db), func() { _ = db.Close() }
+}
+
+func openSQLFor(t *testing.T, dbPath string) (*sql.DB, func()) {
+	t.Helper()
+	// We use a fresh sql connection so we don't hold the service's pool
+	// while running CLI commands in the same goroutine.
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	return db, func() { _ = db.Close() }
+}
+
+func getSegmentIDByRef(t *testing.T, dbPath, sourceRef string) string {
+	t.Helper()
+	db, closer := openSQLFor(t, dbPath)
+	defer closer()
+	var id string
+	if err := db.QueryRow(`SELECT id FROM segments WHERE source_ref = ?`, sourceRef).Scan(&id); err != nil {
+		t.Fatalf("locate segment %q: %v", sourceRef, err)
+	}
+	return id
+}
+
+func getLiveActivityIDByRef(t *testing.T, dbPath, sourceRef string) string {
+	t.Helper()
+	db, closer := openSQLFor(t, dbPath)
+	defer closer()
+	var id string
+	if err := db.QueryRow(
+		`SELECT id FROM entries WHERE type='activity' AND source_ref=? AND is_current=1`,
+		sourceRef,
+	).Scan(&id); err != nil {
+		t.Fatalf("locate activity %q: %v", sourceRef, err)
+	}
+	return id
+}
+
+func markSegmentStale(t *testing.T, dbPath, sourceRef string) {
+	t.Helper()
+	db, closer := openSQLFor(t, dbPath)
+	defer closer()
+	if _, err := db.Exec(`UPDATE segments SET summary_state='stale' WHERE source_ref = ?`, sourceRef); err != nil {
+		t.Fatalf("mark stale: %v", err)
+	}
+}
+
+func currentEntryByLogicalID(t *testing.T, dbPath, oldID string) string {
+	t.Helper()
+	db, closer := openSQLFor(t, dbPath)
+	defer closer()
+	var id string
+	if err := db.QueryRow(
+		`SELECT e.id FROM entries e
+		 WHERE e.is_current = 1
+		   AND e.logical_id = (SELECT logical_id FROM entries WHERE id = ?)`,
+		oldID,
+	).Scan(&id); err != nil {
+		t.Fatalf("find current by logical: %v", err)
+	}
+	return id
+}
+
+func goalActivities(t *testing.T, ctx context.Context, dbPath, goalID string) []domain.Entry {
+	t.Helper()
+	svc, closeSvc := openServiceFor(t, dbPath)
+	defer closeSvc()
+	got, err := svc.GetGoalActivities(ctx, goalID)
+	if err != nil {
+		t.Fatalf("GetGoalActivities: %v", err)
+	}
+	return got
+}
+
+// Silence unused-import warnings if some helpers aren't referenced yet.
+var _ = mock.New
 
 func TestCLI_VersionWithoutConfig(t *testing.T) {
 	// version is the only command that tolerates a missing config.

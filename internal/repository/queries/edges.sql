@@ -17,6 +17,10 @@ UPDATE edges SET is_current = 0 WHERE id = ? AND is_current = 1;
 SELECT id, from_id, relation, metadata FROM edges
  WHERE to_id = ? AND is_current = 1;
 
+-- name: GetOutgoingLiveEdges :many
+SELECT id, to_id, relation, metadata FROM edges
+ WHERE from_id = ? AND is_current = 1;
+
 -- name: SupersedeEdge :exec
 UPDATE edges SET is_current = 0, superseded_by = ? WHERE id = ?;
 

@@ -364,11 +364,20 @@ func (s *Service) insertEntryInTx(ctx context.Context, qtx *sqlcdb.Queries, e *d
 }
 
 // supersedeEntryInTx flips an existing is_current=1 entry to superseded,
-// removes its FTS row, and writes the replacement inside the same tx.
+// removes its FTS row, writes the replacement, and re-points every live
+// edge (both directions) — all inside the supplied tx.
+//
+// Returns an error if oldID does not exist or is not the live version.
 func (s *Service) supersedeEntryInTx(ctx context.Context, qtx *sqlcdb.Queries, oldID string, replacement *domain.Entry) error {
 	old, err := qtx.GetEntryByID(ctx, oldID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("repository: old entry %q not found", oldID)
+	}
 	if err != nil {
 		return fmt.Errorf("repository: load supersede target: %w", err)
+	}
+	if old.IsCurrent != 1 {
+		return fmt.Errorf("repository: old entry %q is not current", oldID)
 	}
 	if err := assignNewIDs(replacement); err != nil {
 		return err
@@ -396,7 +405,11 @@ func (s *Service) supersedeEntryInTx(ctx context.Context, qtx *sqlcdb.Queries, o
 	}); err != nil {
 		return fmt.Errorf("repository: fts insert replacement: %w", err)
 	}
-	return nil
+	// Re-point every live edge touching oldID to newID — both incoming
+	// (to_id was oldID) and outgoing (from_id was oldID). Round-6 contract.
+	// This makes re-Summarize preserve attached goal views: a goal that had
+	// `part_of` from old activity now has `part_of` from new activity.
+	return rePointAllLiveEdges(ctx, qtx, oldID, replacement.ID)
 }
 
 // listSegmentsNeedingMaterialize uses hand-written SQL because the optional
