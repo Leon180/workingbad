@@ -53,3 +53,14 @@ jobs:
         with:
           fetch-depth: 0
       - run: bash scripts/check-migration-gates.sh
+
+  sqlc-diff:
+    name: sqlc drift check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: sqlc-dev/setup-sqlc@v4
+        with:
+          sqlc-version: '1.21.0'
+      - name: verify generated sqlc code matches SQL
+        run: sqlc diff

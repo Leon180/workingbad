@@ -10,29 +10,32 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Leon180/workingbad/internal/domain"
+	"github.com/Leon180/workingbad/internal/repository/sqlcdb"
 )
 
 // Service is the single write gateway into the truth source
 // (truth-source-schema invariant 10). CLI, HTTP, and sync adapters all call
 // these methods; nothing else may write to `entries` / `edges` / FTS5.
+//
+// Persistence is split between sqlc-generated single-statement queries
+// (the q field) and hand-written dynamic SQL for the few methods sqlc can't
+// express cleanly (ListEntries / CountPendingSegments with optional WHERE).
 type Service struct {
 	db *sql.DB
+	q  *sqlcdb.Queries
 }
 
 // NewService wraps an already-open *sql.DB (from Open). The service does not
 // take ownership; callers manage Close.
 func NewService(db *sql.DB) *Service {
-	return &Service{db: db}
+	return &Service{
+		db: db,
+		q:  sqlcdb.New(db),
+	}
 }
 
 // InsertEntry validates, assigns IDs and timestamps, then writes the entry
 // plus its FTS5 mirror in one transaction.
-//
-// New entries:
-//   - ID assigned (uuid v7) if empty.
-//   - LogicalID = ID for a freshly-created entry; preserves invariant that
-//     LogicalID is the stable identity across future supersede chains.
-//   - IsCurrent is forced to true regardless of input.
 func (s *Service) InsertEntry(ctx context.Context, e domain.Entry) (domain.Entry, error) {
 	if err := validateEntry(e); err != nil {
 		return domain.Entry{}, err
@@ -49,11 +52,14 @@ func (s *Service) InsertEntry(ctx context.Context, e domain.Entry) (domain.Entry
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if err := insertEntryRow(ctx, tx, e); err != nil {
-		return domain.Entry{}, err
+	qtx := s.q.WithTx(tx)
+	if err := qtx.InsertEntryRow(ctx, entryToInsertParams(e)); err != nil {
+		return domain.Entry{}, fmt.Errorf("repository: insert entry: %w", err)
 	}
-	if err := insertFTS(ctx, tx, e); err != nil {
-		return domain.Entry{}, err
+	if err := qtx.InsertEntryFTS(ctx, sqlcdb.InsertEntryFTSParams{
+		EntryID: e.ID, Title: e.Title, Body: e.Body,
+	}); err != nil {
+		return domain.Entry{}, fmt.Errorf("repository: fts insert: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return domain.Entry{}, fmt.Errorf("repository: commit: %w", err)
@@ -64,8 +70,6 @@ func (s *Service) InsertEntry(ctx context.Context, e domain.Entry) (domain.Entry
 // Supersede appends a new entry version that replaces oldID. The replacement
 // inherits LogicalID from the old entry, the old entry is marked superseded,
 // and FTS5 is updated to point at the new content — all in one transaction.
-//
-// Errors if oldID does not exist or is not currently is_current=1.
 func (s *Service) Supersede(ctx context.Context, oldID string, replacement domain.Entry) (domain.Entry, error) {
 	if err := validateEntry(replacement); err != nil {
 		return domain.Entry{}, err
@@ -77,48 +81,44 @@ func (s *Service) Supersede(ctx context.Context, oldID string, replacement domai
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var (
-		oldLogicalID string
-		oldIsCurrent int
-	)
-	err = tx.QueryRowContext(ctx,
-		`SELECT logical_id, is_current FROM entries WHERE id = ?`, oldID,
-	).Scan(&oldLogicalID, &oldIsCurrent)
+	qtx := s.q.WithTx(tx)
+
+	old, err := qtx.GetEntryByID(ctx, oldID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Entry{}, fmt.Errorf("repository: old entry %q not found", oldID)
 	}
 	if err != nil {
 		return domain.Entry{}, fmt.Errorf("repository: load old: %w", err)
 	}
-	if oldIsCurrent != 1 {
+	if old.IsCurrent != 1 {
 		return domain.Entry{}, fmt.Errorf("repository: old entry %q is not current", oldID)
 	}
 
 	if err := assignNewIDs(&replacement); err != nil {
 		return domain.Entry{}, err
 	}
-	replacement.LogicalID = oldLogicalID
+	replacement.LogicalID = old.LogicalID
 	now := time.Now().UTC()
 	stampTimes(&replacement, now)
 	replacement.IsCurrent = true
 
-	// Mark old superseded, drop its FTS row, write replacement.
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE entries SET is_current = 0, superseded_by = ?, updated_at = ? WHERE id = ?`,
-		replacement.ID, now.Format(time.RFC3339Nano), oldID,
-	); err != nil {
+	if err := qtx.FlipEntrySuperseded(ctx, sqlcdb.FlipEntrySupersededParams{
+		SupersededBy: stringToNS(replacement.ID),
+		UpdatedAt:    formatRFC(now),
+		ID:           oldID,
+	}); err != nil {
 		return domain.Entry{}, fmt.Errorf("repository: mark superseded: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM entries_fts WHERE entry_id = ?`, oldID,
-	); err != nil {
+	if err := qtx.DeleteEntryFTS(ctx, oldID); err != nil {
 		return domain.Entry{}, fmt.Errorf("repository: drop old fts: %w", err)
 	}
-	if err := insertEntryRow(ctx, tx, replacement); err != nil {
-		return domain.Entry{}, err
+	if err := qtx.InsertEntryRow(ctx, entryToInsertParams(replacement)); err != nil {
+		return domain.Entry{}, fmt.Errorf("repository: insert replacement: %w", err)
 	}
-	if err := insertFTS(ctx, tx, replacement); err != nil {
-		return domain.Entry{}, err
+	if err := qtx.InsertEntryFTS(ctx, sqlcdb.InsertEntryFTSParams{
+		EntryID: replacement.ID, Title: replacement.Title, Body: replacement.Body,
+	}); err != nil {
+		return domain.Entry{}, fmt.Errorf("repository: fts insert replacement: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return domain.Entry{}, fmt.Errorf("repository: commit: %w", err)
@@ -190,56 +190,4 @@ func stampTimes(e *domain.Entry, now time.Time) {
 		e.CreatedAt = now
 	}
 	e.UpdatedAt = now
-}
-
-func insertEntryRow(ctx context.Context, tx *sql.Tx, e domain.Entry) error {
-	metadata := e.Metadata
-	if metadata == "" {
-		metadata = "{}"
-	}
-	_, err := tx.ExecContext(ctx,
-		`INSERT INTO entries
-		   (id, logical_id, type, title, body, source, source_ref, origin, repo_id, author, status, is_current, superseded_by, metadata, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.ID, e.LogicalID, string(e.Type), e.Title, e.Body,
-		string(e.Source), nullableString(e.SourceRef),
-		string(e.Origin), nullableString(e.RepoID), nullableString(e.Author),
-		nullableString(string(e.Status)),
-		boolToInt(e.IsCurrent), nullableString(e.SupersededBy),
-		metadata,
-		e.CreatedAt.Format(time.RFC3339Nano),
-		e.UpdatedAt.Format(time.RFC3339Nano),
-	)
-	if err != nil {
-		return fmt.Errorf("repository: insert entry: %w", err)
-	}
-	return nil
-}
-
-func insertFTS(ctx context.Context, tx *sql.Tx, e domain.Entry) error {
-	if !e.IsCurrent {
-		return nil
-	}
-	_, err := tx.ExecContext(ctx,
-		`INSERT INTO entries_fts (entry_id, title, body) VALUES (?, ?, ?)`,
-		e.ID, e.Title, e.Body,
-	)
-	if err != nil {
-		return fmt.Errorf("repository: fts insert: %w", err)
-	}
-	return nil
-}
-
-func nullableString(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-func boolToInt(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
 }
