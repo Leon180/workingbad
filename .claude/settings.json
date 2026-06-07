@@ -61,7 +61,8 @@
       "Bash(git mv *)",
       "Bash(grep -E \"^\\(ai|source|sink\\)$\")",
       "Bash(rtk make *)",
-      "Edit(/.claude/skills/go-single-binary-ci/**)"
+      "Edit(/.claude/skills/go-single-binary-ci/**)",
+      "Edit(/.claude/skills/golang-performance/**)"
     ]
   }
 }
