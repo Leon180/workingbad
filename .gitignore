@@ -1,0 +1,34 @@
+# Binary
+/workingbad
+/bin/
+
+# Test / coverage
+*.test
+*.out
+coverage.txt
+coverage.html
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+
+# Local data
+*.db
+*.sqlite
+*.sqlite3
+
+# Env
+.env
+.env.local
+
+# Temp / build artifacts
+/tmp/
+/dist/
+
+# Personal Claude Code settings (not project-wide)
+.claude/settings.local.json
+note

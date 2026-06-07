@@ -1,0 +1,36 @@
+# workingbad — example configuration.
+# Copy to ./config.yaml and edit. See docs/ROADMAP.md and the truth-source-schema
+# / connector-interface skills for the full contract.
+
+db:
+  path: ./workingbad.db
+
+# AI is REQUIRED — set kind to exactly one of local | api.
+# - local: zero data leaves the machine; requires Ollama running locally.
+# - api:   higher quality; every Summarize sends segment text to the cloud.
+ai:
+  kind: local
+  local:
+    endpoint: http://localhost:11434
+    model: llama3.1
+  # api:
+  #   model: claude-sonnet-4-7
+  #   api_key_env: ANTHROPIC_API_KEY   # name of the env var; never paste the key here
+
+# All three defaults are config-tunable without migration. The values below
+# are the locked-in defaults from the auto-grill session; tune to your repo.
+defaults:
+  gap_threshold: 90m   # inactivity gap that closes one activity segment
+  max_commits: 200     # hard cap on commits per segment
+  coalesce_window: 5m  # manual-edit folding window
+
+# Sources read external state; sinks push curated output back. Per-source
+# config (the `config:` blob) is validated by the connector at registry
+# wiring time — this layer only checks type/name.
+sources:
+  - type: git
+    name: my-repo
+    config:
+      path: ~/code/my-repo
+
+sinks: []
