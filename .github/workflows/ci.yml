@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: build / vet / test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # migration gates need full history for tag diffs
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+
+      - run: go mod download
+      - run: go vet ./...
+      - run: go test -race ./...
+      - name: build single binary
+        run: go build -o workingbad ./cmd/workingbad
+
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: golangci/golangci-lint-action@v7
+        with:
+          # Must be built with Go ≥ 1.25 to match go.mod (validator dragged
+          # the toolchain up). action@v7 + v2.x of golangci-lint ships with
+          # Go 1.25; @v6 + `latest` resolves to v1.64.x (Go 1.24, fails).
+          version: v2.4.0
+
+  migration-gates:
+    name: migration discipline (3 gates)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: bash scripts/check-migration-gates.sh
