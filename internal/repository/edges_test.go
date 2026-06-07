@@ -244,11 +244,9 @@ func setupGoalAndActivity(t *testing.T, s *Service) (domain.Entry, domain.Entry)
 	).Scan(&activityID); err != nil {
 		t.Fatalf("locate activity: %v", err)
 	}
-	var activity domain.Entry
-	row := s.db.QueryRow(`SELECT `+entryColumns+` FROM entries WHERE id = ?`, activityID)
-	activity, err = scanEntry(row)
+	row, err := s.q.GetEntryByID(ctx(t), activityID)
 	if err != nil {
-		t.Fatalf("scan activity: %v", err)
+		t.Fatalf("load activity: %v", err)
 	}
-	return goal, activity
+	return goal, entryFromSqlc(row)
 }

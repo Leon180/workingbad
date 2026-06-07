@@ -1,0 +1,29 @@
+version: "2"
+
+sql:
+  - engine: sqlite
+    queries: internal/repository/queries
+    # 0007 is the FTS5 virtual table — sqlc's SQLite parser doesn't understand
+    # the FTS5 grammar. We exclude it from schema parsing here; FTS5 queries
+    # in the queries/ files still work because they SELECT/INSERT against
+    # entries_fts as if it were a plain table (which is true at the SQL
+    # surface level even though the implementation is virtual).
+    schema:
+      - internal/migrations/0001_entries.sql
+      - internal/migrations/0002_edges.sql
+      - internal/migrations/0003_segments.sql
+      - internal/migrations/0004_raw.sql
+      - internal/migrations/0005_sync_state.sql
+      - internal/migrations/0006_source_checkpoint.sql
+      - internal/repository/queries/fts_schema_shim.sql
+    gen:
+      go:
+        package: sqlcdb
+        out: internal/repository/sqlcdb
+        sql_package: database/sql
+        emit_json_tags: false
+        emit_interface: false
+        emit_empty_slices: true
+        emit_prepared_queries: false
+        emit_pointers_for_null_types: false
+        omit_unused_structs: true

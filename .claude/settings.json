@@ -51,7 +51,13 @@
       "Bash(echo \"watch exit=$?\")",
       "Bash(xargs -I{} gh run view --log-failed {})",
       "Bash(rtk golangci-lint *)",
-      "Bash(awk '{print \"  size:\", $5, \"bytes\"}')"
+      "Bash(awk '{print \"  size:\", $5, \"bytes\"}')",
+      "Bash(sqlc version *)",
+      "Bash(go env *)",
+      "Bash(ls \"$\\(go env GOPATH\\)/bin/sqlc\")",
+      "Bash(sqlc generate *)",
+      "Bash(make ci-sqlc *)",
+      "Bash(go test *)"
     ]
   }
 }
