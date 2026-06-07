@@ -57,7 +57,11 @@
       "Bash(ls \"$\\(go env GOPATH\\)/bin/sqlc\")",
       "Bash(sqlc generate *)",
       "Bash(make ci-sqlc *)",
-      "Bash(go test *)"
+      "Bash(go test *)",
+      "Bash(git mv *)",
+      "Bash(grep -E \"^\\(ai|source|sink\\)$\")",
+      "Bash(rtk make *)",
+      "Edit(/.claude/skills/go-single-binary-ci/**)"
     ]
   }
 }

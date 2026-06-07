@@ -6,7 +6,7 @@ import (
 	"context"
 
 	"github.com/Leon180/workingbad/internal/domain"
-	"github.com/Leon180/workingbad/internal/source"
+	"github.com/Leon180/workingbad/internal/ports/source"
 )
 
 // SubjectKind tags the stable identity Sinks key on for idempotency. Tying

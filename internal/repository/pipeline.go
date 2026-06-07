@@ -10,8 +10,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/Leon180/workingbad/internal/ai"
 	"github.com/Leon180/workingbad/internal/domain"
+	"github.com/Leon180/workingbad/internal/ports/ai"
 	"github.com/Leon180/workingbad/internal/repository/sqlcdb"
 )
 
