@@ -311,6 +311,68 @@ func TestBatchMaterialize_ReMaterializeSupersedes(t *testing.T) {
 	}
 }
 
+// TestBatchMaterialize_ReMaterialize_PreservesAttachedGoal is the P0
+// regression for the bug found in the post-Slice-A multi-agent review:
+// before the rePoint-outgoing fix, after re-Summarize, the new activity was
+// not returned by GetGoalActivities because the part_of edge still pointed
+// to the now-superseded old activity. This test fails on the pre-fix code.
+func TestBatchMaterialize_ReMaterialize_PreservesAttachedGoal(t *testing.T) {
+	s := newService(t)
+	provider := mock.New()
+
+	// Materialise an activity for a segment.
+	seg := setupSegmentWithChanges(t, s, "repo-1", "ref-attach", "patch-attach", "sha-attach")
+	if _, err := s.BatchMaterialize(ctx(t), MaterializeScope{}, provider); err != nil {
+		t.Fatalf("first BatchMaterialize: %v", err)
+	}
+	var activityIDBefore string
+	_ = s.db.QueryRow(
+		`SELECT id FROM entries WHERE type='activity' AND source_ref=? AND is_current=1`, "ref-attach",
+	).Scan(&activityIDBefore)
+
+	// Create a goal and attach the activity to it.
+	goal, err := s.InsertEntry(ctx(t), domain.Entry{
+		Type: domain.EntryTypeGoal, Origin: domain.OriginLocal,
+		Source: domain.SourceManual, SourceRef: "goal-1",
+		Title: "Phase 1 Slice A complete", Status: domain.StatusOpen,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AttachToGoal(ctx(t), activityIDBefore, goal.ID); err != nil {
+		t.Fatalf("AttachToGoal: %v", err)
+	}
+
+	// Mark segment stale, swap Summarize so the new activity is observably
+	// different content, re-materialize.
+	if _, err := s.db.Exec(`UPDATE segments SET summary_state='stale' WHERE id = ?`, seg.ID); err != nil {
+		t.Fatal(err)
+	}
+	provider.WithSummarizeFunc(func(_ context.Context, _ []domain.RawChange) (string, string, error) {
+		return "Refreshed activity", "new body", nil
+	})
+	if _, err := s.BatchMaterialize(ctx(t), MaterializeScope{}, provider); err != nil {
+		t.Fatalf("re-BatchMaterialize: %v", err)
+	}
+
+	// The goal's activity list MUST still find a live activity. Before the
+	// fix this returned an empty list because the part_of edge still pointed
+	// to the now-superseded original activity id.
+	got, err := s.GetGoalActivities(ctx(t), goal.ID)
+	if err != nil {
+		t.Fatalf("GetGoalActivities: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("after re-materialize: got %d attached activities, want 1 (re-point lost the edge)", len(got))
+	}
+	if got[0].ID == activityIDBefore {
+		t.Errorf("got returned old activity %q; expected the newly-materialised replacement", activityIDBefore)
+	}
+	if got[0].Title != "Refreshed activity" {
+		t.Errorf("got title %q, want 'Refreshed activity' — wrong activity returned", got[0].Title)
+	}
+}
+
 func TestBatchMaterialize_NoChangesIsError(t *testing.T) {
 	s := newService(t)
 	provider := mock.New()

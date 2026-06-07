@@ -69,7 +69,11 @@ func (s *Service) InsertEntry(ctx context.Context, e domain.Entry) (domain.Entry
 
 // Supersede appends a new entry version that replaces oldID. The replacement
 // inherits LogicalID from the old entry, the old entry is marked superseded,
-// and FTS5 is updated to point at the new content — all in one transaction.
+// FTS5 is updated, and every live edge touching oldID is re-pointed at the
+// new id (both incoming and outgoing) — all in one transaction.
+//
+// Delegates the bulk of the work to supersedeEntryInTx so service.Supersede /
+// materializeOne / SetGoalStatus all share the same supersede behaviour.
 func (s *Service) Supersede(ctx context.Context, oldID string, replacement domain.Entry) (domain.Entry, error) {
 	if err := validateEntry(replacement); err != nil {
 		return domain.Entry{}, err
@@ -82,43 +86,8 @@ func (s *Service) Supersede(ctx context.Context, oldID string, replacement domai
 	defer func() { _ = tx.Rollback() }()
 
 	qtx := s.q.WithTx(tx)
-
-	old, err := qtx.GetEntryByID(ctx, oldID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return domain.Entry{}, fmt.Errorf("repository: old entry %q not found", oldID)
-	}
-	if err != nil {
-		return domain.Entry{}, fmt.Errorf("repository: load old: %w", err)
-	}
-	if old.IsCurrent != 1 {
-		return domain.Entry{}, fmt.Errorf("repository: old entry %q is not current", oldID)
-	}
-
-	if err := assignNewIDs(&replacement); err != nil {
+	if err := s.supersedeEntryInTx(ctx, qtx, oldID, &replacement); err != nil {
 		return domain.Entry{}, err
-	}
-	replacement.LogicalID = old.LogicalID
-	now := time.Now().UTC()
-	stampTimes(&replacement, now)
-	replacement.IsCurrent = true
-
-	if err := qtx.FlipEntrySuperseded(ctx, sqlcdb.FlipEntrySupersededParams{
-		SupersededBy: stringToNS(replacement.ID),
-		UpdatedAt:    formatRFC(now),
-		ID:           oldID,
-	}); err != nil {
-		return domain.Entry{}, fmt.Errorf("repository: mark superseded: %w", err)
-	}
-	if err := qtx.DeleteEntryFTS(ctx, oldID); err != nil {
-		return domain.Entry{}, fmt.Errorf("repository: drop old fts: %w", err)
-	}
-	if err := qtx.InsertEntryRow(ctx, entryToInsertParams(replacement)); err != nil {
-		return domain.Entry{}, fmt.Errorf("repository: insert replacement: %w", err)
-	}
-	if err := qtx.InsertEntryFTS(ctx, sqlcdb.InsertEntryFTSParams{
-		EntryID: replacement.ID, Title: replacement.Title, Body: replacement.Body,
-	}); err != nil {
-		return domain.Entry{}, fmt.Errorf("repository: fts insert replacement: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return domain.Entry{}, fmt.Errorf("repository: commit: %w", err)

@@ -139,10 +139,11 @@ func (s *Service) SetGoalStatus(ctx context.Context, goalID string, newStatus do
 	if err := validateEntry(replacement); err != nil {
 		return domain.Entry{}, err
 	}
+	// supersedeEntryInTx now handles edge re-pointing in both directions for
+	// every supersede path (round 6 contract); no explicit rePoint call
+	// needed here. SetGoalStatus picks up incoming part_of edges that
+	// activities had pointed at the old goal id via that helper.
 	if err := s.supersedeEntryInTx(ctx, qtx, goalID, &replacement); err != nil {
-		return domain.Entry{}, err
-	}
-	if err := rePointIncomingEdges(ctx, qtx, goalID, replacement.ID); err != nil {
 		return domain.Entry{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -170,39 +171,87 @@ func assertLive(ctx context.Context, qtx *sqlcdb.Queries, id, wantType string) e
 	return nil
 }
 
-// rePointIncomingEdges copies every live incoming edge to the old entry into
-// a fresh edge pointing at the new entry, marking the old edges superseded.
-func rePointIncomingEdges(ctx context.Context, qtx *sqlcdb.Queries, oldID, newID string) error {
+// rePointAllLiveEdges re-points every live edge touching oldID to newID,
+// in both directions. Symmetric coverage is the contract grill round 6
+// locked: "supersede auto re-point — Summarizer is responsible". The pre-fix
+// code only handled incoming edges via SetGoalStatus, which silently dropped
+// attached activities from goal views after re-Summarize.
+//
+// For each live edge with to_id = oldID (incoming): supersede the old edge,
+// insert a fresh edge with the same from_id/relation but to_id = newID.
+// For each live edge with from_id = oldID (outgoing): symmetric — supersede
+// the old, insert with from_id = newID but the same to_id/relation.
+//
+// Idempotent and safe to call when oldID has no live edges.
+func rePointAllLiveEdges(ctx context.Context, qtx *sqlcdb.Queries, oldID, newID string) error {
+	if err := rePointIncoming(ctx, qtx, oldID, newID); err != nil {
+		return err
+	}
+	return rePointOutgoing(ctx, qtx, oldID, newID)
+}
+
+func rePointIncoming(ctx context.Context, qtx *sqlcdb.Queries, oldID, newID string) error {
 	incoming, err := qtx.GetIncomingLiveEdges(ctx, oldID)
 	if err != nil {
 		return fmt.Errorf("repository: load incoming edges: %w", err)
 	}
 	now := formatRFC(time.Now().UTC())
 	for _, e := range incoming {
-		nextEdgeID, err := uuid.NewV7()
+		next, err := nextEdgeID()
 		if err != nil {
-			return fmt.Errorf("repository: gen repoint edge id: %w", err)
+			return err
 		}
-		next := nextEdgeID.String()
-		if err := qtx.SupersedeEdge(ctx, sqlcdb.SupersedeEdgeParams{
-			SupersededBy: stringToNS(next), ID: e.ID,
-		}); err != nil {
-			return fmt.Errorf("repository: flip old edge: %w", err)
+		if err := supersedeAndInsertEdge(ctx, qtx, e.ID, next, e.FromID, newID, e.Relation, e.Metadata, now); err != nil {
+			return err
 		}
-		metaArg := e.Metadata
-		if metaArg == "" {
-			metaArg = "{}"
+	}
+	return nil
+}
+
+func rePointOutgoing(ctx context.Context, qtx *sqlcdb.Queries, oldID, newID string) error {
+	outgoing, err := qtx.GetOutgoingLiveEdges(ctx, oldID)
+	if err != nil {
+		return fmt.Errorf("repository: load outgoing edges: %w", err)
+	}
+	now := formatRFC(time.Now().UTC())
+	for _, e := range outgoing {
+		next, err := nextEdgeID()
+		if err != nil {
+			return err
 		}
-		if err := qtx.InsertEdge(ctx, sqlcdb.InsertEdgeParams{
-			ID:        next,
-			FromID:    e.FromID,
-			ToID:      newID,
-			Relation:  e.Relation,
-			Metadata:  metaArg,
-			CreatedAt: now,
-		}); err != nil {
-			return fmt.Errorf("repository: insert repointed edge: %w", err)
+		if err := supersedeAndInsertEdge(ctx, qtx, e.ID, next, newID, e.ToID, e.Relation, e.Metadata, now); err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+func nextEdgeID() (string, error) {
+	id, err := uuid.NewV7()
+	if err != nil {
+		return "", fmt.Errorf("repository: gen repoint edge id: %w", err)
+	}
+	return id.String(), nil
+}
+
+func supersedeAndInsertEdge(ctx context.Context, qtx *sqlcdb.Queries, oldEdgeID, newEdgeID, fromID, toID, relation, metadata, createdAt string) error {
+	if err := qtx.SupersedeEdge(ctx, sqlcdb.SupersedeEdgeParams{
+		SupersededBy: stringToNS(newEdgeID), ID: oldEdgeID,
+	}); err != nil {
+		return fmt.Errorf("repository: flip old edge: %w", err)
+	}
+	if metadata == "" {
+		metadata = "{}"
+	}
+	if err := qtx.InsertEdge(ctx, sqlcdb.InsertEdgeParams{
+		ID:        newEdgeID,
+		FromID:    fromID,
+		ToID:      toID,
+		Relation:  relation,
+		Metadata:  metadata,
+		CreatedAt: createdAt,
+	}); err != nil {
+		return fmt.Errorf("repository: insert repointed edge: %w", err)
 	}
 	return nil
 }

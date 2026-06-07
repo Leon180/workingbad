@@ -152,6 +152,46 @@ func (q *Queries) GetLiveEdgeByTriple(ctx context.Context, arg GetLiveEdgeByTrip
 	return id, err
 }
 
+const getOutgoingLiveEdges = `-- name: GetOutgoingLiveEdges :many
+SELECT id, to_id, relation, metadata FROM edges
+ WHERE from_id = ? AND is_current = 1
+`
+
+type GetOutgoingLiveEdgesRow struct {
+	ID       string
+	ToID     string
+	Relation string
+	Metadata string
+}
+
+func (q *Queries) GetOutgoingLiveEdges(ctx context.Context, fromID string) ([]GetOutgoingLiveEdgesRow, error) {
+	rows, err := q.db.QueryContext(ctx, getOutgoingLiveEdges, fromID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetOutgoingLiveEdgesRow{}
+	for rows.Next() {
+		var i GetOutgoingLiveEdgesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ToID,
+			&i.Relation,
+			&i.Metadata,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const insertEdge = `-- name: InsertEdge :exec
 INSERT INTO edges (id, from_id, to_id, relation, is_current, metadata, created_at)
 VALUES (?, ?, ?, ?, 1, ?, ?)
