@@ -47,7 +47,11 @@
       "Bash(golangci-lint run *)",
       "Bash(echo \"lint exit=$?\")",
       "Bash(goimports -local github.com/Leon180/workingbad -w .)",
-      "Bash(gofmt -s -w .)"
+      "Bash(gofmt -s -w .)",
+      "Bash(echo \"watch exit=$?\")",
+      "Bash(xargs -I{} gh run view --log-failed {})",
+      "Bash(rtk golangci-lint *)",
+      "Bash(awk '{print \"  size:\", $5, \"bytes\"}')"
     ]
   }
 }
