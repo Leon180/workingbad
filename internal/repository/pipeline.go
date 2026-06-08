@@ -522,10 +522,11 @@ func (s *Service) supersedeEntryInTxWithExpected(ctx context.Context, qtx *sqlcd
 			replacement.OccurredAt = parsed
 		}
 	}
-	// Version chain increments: optimistic-lock contract.
-	if oldVersion := nullInt64Or(old.Version, 1); replacement.Version <= 0 {
-		replacement.Version = int(oldVersion) + 1
-	}
+	// Version always increments under supersede — the chain is monotonic.
+	// We deliberately ignore replacement.Version here (it may be inherited
+	// via struct copy from SetGoalStatus / similar code paths); the
+	// authoritative source is old.Version + 1.
+	replacement.Version = int(nullInt64Or(old.Version, 1)) + 1
 	now := time.Now().UTC()
 	stampTimes(replacement, now)
 	replacement.IsCurrent = true
