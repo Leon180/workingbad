@@ -1,0 +1,56 @@
+{{template "base" .}}
+{{define "content"}}
+{{$live := .Live}}
+<p class="crumbs"><a href="/">← entries</a></p>
+
+<h1>{{$live.Title}}</h1>
+
+<div class="detail-meta">
+  <span class="badge type-{{$live.Type}}">{{$live.Type}}</span>
+  {{if $live.Status}}<span class="badge status">{{$live.Status}}</span>{{end}}
+  <span>v{{$live.Version}}</span>
+  {{if $live.QualityDegraded}}<span class="badge degraded" title="occurred_at fell back to ingested_at — no source-true event time">degraded</span>{{end}}
+</div>
+
+{{if $live.Body}}
+<section class="body">
+  <pre>{{$live.Body}}</pre>
+</section>
+{{end}}
+
+<h2>history</h2>
+<table>
+  <thead>
+    <tr>
+      <th>v</th>
+      <th>occurred</th>
+      <th>ingested</th>
+      <th>title</th>
+      <th>id</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .History}}
+    <tr{{if .IsCurrent}} class="current"{{end}}>
+      <td>v{{.Version}}</td>
+      <td class="time">{{fmtTime .OccurredAt}}</td>
+      <td class="time">{{fmtTime .IngestedAt}}</td>
+      <td>{{.Title}}</td>
+      <td class="id">{{.ID}}</td>
+      <td>{{if .IsCurrent}}current{{end}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+
+<dl class="detail-kv">
+  <dt>logical id</dt><dd class="id">{{$live.LogicalID}}</dd>
+  <dt>source</dt><dd>{{$live.Source}}{{if $live.SourceRef}} <span class="id">({{$live.SourceRef}})</span>{{end}}</dd>
+  <dt>origin</dt><dd>{{$live.Origin}}</dd>
+  {{if $live.Author}}<dt>author</dt><dd>{{$live.Author}}</dd>{{end}}
+  {{if $live.Actor}}<dt>actor</dt><dd>{{$live.Actor}}</dd>{{end}}
+  {{if $live.Reason}}<dt>reason</dt><dd>{{$live.Reason}}</dd>{{end}}
+  {{if $live.RepoID}}<dt>repo</dt><dd>{{$live.RepoID}}</dd>{{end}}
+</dl>
+{{end}}

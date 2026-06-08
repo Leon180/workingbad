@@ -70,10 +70,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		AsOf:        asOf,
 		AtParseErr:  asOfErrString(atStr, asOfErr),
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.templates.ExecuteTemplate(w, "index.html", data); err != nil {
-		http.Error(w, fmt.Sprintf("template: %v", err), http.StatusInternalServerError)
-	}
+	s.render(w, "index.html", data)
 }
 
 type listData struct {

@@ -118,6 +118,86 @@ func TestIndex_AtParseError(t *testing.T) {
 	}
 }
 
+// TestEntryDetail_RendersHistory creates v1+v2 of an entry and asserts the
+// detail page shows both versions with v2 marked current — the bitemporal
+// "git log <file>" equivalent.
+func TestEntryDetail_RendersHistory(t *testing.T) {
+	srv := newTestServer(t)
+	ctx := context.Background()
+
+	v1 := seedEntry(t, srv, ctx, domain.EntryTypeDecision, "Pick SQLite")
+	v2, err := srv.svc.Supersede(ctx, v1.ID, v1.Version, domain.Entry{
+		Type: domain.EntryTypeDecision, Origin: domain.OriginLocal,
+		Source: domain.SourceManual, SourceRef: "pick-2",
+		Title: "Pick SQLite (revised)",
+	})
+	if err != nil {
+		t.Fatalf("supersede: %v", err)
+	}
+
+	// Both id and logical_id should resolve to the same detail page.
+	for _, lookup := range []string{v2.ID, v1.LogicalID, v1.ID} {
+		t.Run("lookup="+lookup[:8], func(t *testing.T) {
+			body := getBody(t, srv, "/entries/"+lookup)
+			if !strings.Contains(body, "Pick SQLite (revised)") {
+				t.Errorf("missing live title")
+			}
+			if !strings.Contains(body, "Pick SQLite") {
+				t.Errorf("missing original title in history")
+			}
+			if !strings.Contains(body, "v2") || !strings.Contains(body, "v1") {
+				t.Errorf("history table missing version numbers")
+			}
+			if !strings.Contains(body, "current") {
+				t.Errorf("missing current marker")
+			}
+		})
+	}
+}
+
+func TestEntryDetail_NotFound(t *testing.T) {
+	srv := newTestServer(t)
+	rec := getRec(t, srv, "/entries/no-such-id")
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+}
+
+// TestGoalDetail_ShowsAttachedActivities — attach an activity to a goal,
+// then GET /goals/{id} and assert the activity appears.
+func TestGoalDetail_ShowsAttachedActivities(t *testing.T) {
+	srv := newTestServer(t)
+	ctx := context.Background()
+	goal := seedGoal(t, srv, ctx, "Ship Slice B")
+	activity := seedEntry(t, srv, ctx, domain.EntryTypeActivity, "Wire web list")
+
+	if _, err := srv.svc.AttachToGoal(ctx, activity.ID, goal.ID); err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+
+	body := getBody(t, srv, "/goals/"+goal.ID)
+	if !strings.Contains(body, "Ship Slice B") {
+		t.Error("goal title missing")
+	}
+	if !strings.Contains(body, "Wire web list") {
+		t.Error("attached activity missing")
+	}
+	if !strings.Contains(body, "attached activities (1)") {
+		t.Errorf("expected '(1)' count, body: %q", body)
+	}
+}
+
+func TestGoalDetail_RejectsNonGoal(t *testing.T) {
+	srv := newTestServer(t)
+	ctx := context.Background()
+	e := seedEntry(t, srv, ctx, domain.EntryTypeResearch, "Not a goal")
+
+	rec := getRec(t, srv, "/goals/"+e.ID)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for non-goal, got %d", rec.Code)
+	}
+}
+
 // TestIndex_EmptyState renders the friendly "no entries" copy + the CLI
 // hint without crashing on a zero-row list.
 func TestIndex_EmptyState(t *testing.T) {

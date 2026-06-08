@@ -41,10 +41,16 @@ var staticFS embed.FS
 
 // Server bundles the HTTP listener, the repository service it dispatches
 // to, the parsed templates, and the security middleware chain.
+//
+// templates is keyed by page filename. Each entry is a separately-parsed
+// template set: base.html + that one page. Splitting per-page avoids the
+// html/template "last-defined wins" trap where multiple pages all
+// declaring {{define "content"}} would trample each other and every page
+// would render the same body.
 type Server struct {
 	svc       *repository.Service
 	cfg       config.Web
-	templates *template.Template
+	templates map[string]*template.Template
 	mux       *http.ServeMux
 	httpSrv   *http.Server
 	listener  net.Listener
@@ -76,6 +82,8 @@ func NewServer(svc *repository.Service, cfg config.Web) (*Server, error) {
 	}
 
 	s.mux.HandleFunc("GET /", s.handleIndex)
+	s.mux.HandleFunc("GET /entries/{id}", s.handleEntryDetail)
+	s.mux.HandleFunc("GET /goals/{id}", s.handleGoalDetail)
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
@@ -109,6 +117,22 @@ func NewServer(svc *repository.Service, cfg config.Web) (*Server, error) {
 	return s, nil
 }
 
+// render executes the named page template against w. Every handler routes
+// through here so error handling stays uniform (5xx with template-source
+// detail in the body, since this is a single-user localhost UI and the
+// detail helps debugging more than it leaks anything).
+func (s *Server) render(w http.ResponseWriter, name string, data any) {
+	tmpl, ok := s.templates[name]
+	if !ok {
+		http.Error(w, "template: unknown page "+name, http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := tmpl.ExecuteTemplate(w, "base", data); err != nil {
+		http.Error(w, fmt.Sprintf("template: %v", err), http.StatusInternalServerError)
+	}
+}
+
 // Addr is the actual bound address; useful for tests + the CLI startup
 // banner when Port was 0 (let-kernel-pick).
 func (s *Server) Addr() string {
@@ -140,16 +164,37 @@ func (s *Server) Serve(ctx context.Context) error {
 	}
 }
 
-// parseTemplates loads every templates/*.html file as a single template
-// set so handlers can ExecuteTemplate by name and partials compose.
-func parseTemplates() (*template.Template, error) {
-	root := template.New("workingbad").Funcs(template.FuncMap{
+// parseTemplates returns one parsed template set per page. Each set
+// includes base.html plus exactly one page file — this is what stops
+// {{define "content"}} blocks across pages from clobbering each other
+// (html/template's "last define wins" silently produced bug-shaped UIs
+// the first time we tried single-set loading).
+func parseTemplates() (map[string]*template.Template, error) {
+	funcs := template.FuncMap{
 		"fmtTime": func(t time.Time) string {
 			if t.IsZero() {
 				return "-"
 			}
 			return t.UTC().Format(time.RFC3339)
 		},
-	})
-	return root.ParseFS(templatesFS, "templates/*.html")
+	}
+
+	pageFiles, err := fs.Glob(templatesFS, "templates/*.html")
+	if err != nil {
+		return nil, fmt.Errorf("glob templates: %w", err)
+	}
+
+	out := make(map[string]*template.Template, len(pageFiles))
+	for _, page := range pageFiles {
+		name := page[len("templates/"):]
+		if name == "base.html" {
+			continue
+		}
+		t, err := template.New(name).Funcs(funcs).ParseFS(templatesFS, "templates/base.html", page)
+		if err != nil {
+			return nil, fmt.Errorf("parse %s: %w", name, err)
+		}
+		out[name] = t
+	}
+	return out, nil
 }

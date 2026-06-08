@@ -1,0 +1,52 @@
+{{template "base" .}}
+{{define "content"}}
+{{$goal := .Goal}}
+<p class="crumbs"><a href="/">← entries</a> · <a href="/entries/{{$goal.ID}}">history</a></p>
+
+<h1>{{$goal.Title}}</h1>
+
+<div class="detail-meta">
+  <span class="badge type-goal">goal</span>
+  <span class="badge status">{{$goal.Status}}</span>
+  <span>v{{$goal.Version}}</span>
+</div>
+
+{{if $goal.Body}}
+<section class="body">
+  <pre>{{$goal.Body}}</pre>
+</section>
+{{end}}
+
+<h2>attached activities ({{len .Activities}})</h2>
+{{if .Activities}}
+<table>
+  <thead>
+    <tr>
+      <th>occurred</th>
+      <th>title</th>
+      <th>v</th>
+      <th>id</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Activities}}
+    <tr>
+      <td class="time">{{fmtTime .OccurredAt}}</td>
+      <td><a href="/entries/{{.ID}}">{{.Title}}</a></td>
+      <td>v{{.Version}}</td>
+      <td class="id">{{.ID}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="empty">No attached activities yet. Attach via CLI:</p>
+<pre>workingbad attach &lt;activity-id&gt; {{$goal.ID}}</pre>
+{{end}}
+
+<dl class="detail-kv">
+  <dt>logical id</dt><dd class="id">{{$goal.LogicalID}}</dd>
+  <dt>id</dt><dd class="id">{{$goal.ID}}</dd>
+  <dt>source</dt><dd>{{$goal.Source}}{{if $goal.SourceRef}} <span class="id">({{$goal.SourceRef}})</span>{{end}}</dd>
+</dl>
+{{end}}

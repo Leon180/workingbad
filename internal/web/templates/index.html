@@ -54,7 +54,13 @@
     <tr>
       <td>{{.Type}}</td>
       <td>{{if .Status}}{{.Status}}{{else}}-{{end}}</td>
-      <td>{{.Title}}</td>
+      <td>
+        {{- if eq .Type "goal" -}}
+          <a href="/goals/{{.ID}}">{{.Title}}</a>
+        {{- else -}}
+          <a href="/entries/{{.ID}}">{{.Title}}</a>
+        {{- end -}}
+      </td>
       <td class="time">{{fmtTime .OccurredAt}}</td>
       <td class="time">{{fmtTime .IngestedAt}}</td>
       <td>v{{.Version}}</td>

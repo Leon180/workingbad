@@ -82,3 +82,50 @@ table tbody tr:nth-child(even) { background: var(--row-alt); }
 .id { font-size: 0.75rem; color: var(--muted); }
 .meta { color: var(--muted); font-size: 0.85rem; margin-top: 0.75rem; }
 .empty { color: var(--muted); margin: 2rem 0; }
+
+.crumbs { font-size: 0.9rem; color: var(--muted); margin-bottom: 1rem; }
+.crumbs a { color: var(--accent); text-decoration: none; }
+.crumbs a:hover { text-decoration: underline; }
+
+.detail-meta { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem; }
+.badge {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  background: var(--row-alt);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 0.8rem;
+}
+.badge.type-goal     { background: #fff3d6; border-color: #d4b876; }
+.badge.type-activity { background: #d6f0ff; border-color: #76b8d4; }
+.badge.type-decision { background: #e6d6ff; border-color: #9876d4; }
+.badge.type-research { background: #d6ffe6; border-color: #76d49b; }
+.badge.type-discuss  { background: #ffe6e6; border-color: #d47676; }
+.badge.degraded      { background: #ffe8c0; border-color: #c98b3a; }
+.badge.status        { background: #fff; border-color: var(--border); }
+
+.body pre {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0.75rem;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.detail-kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 1rem;
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+.detail-kv dt { color: var(--muted); }
+.detail-kv dd { margin: 0; }
+
+table tbody tr.current { background: #fff8dc; }
+table tbody tr.current:nth-child(even) { background: #fff5c5; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
