@@ -3,6 +3,8 @@ package web
 import (
 	"fmt"
 	"net/http"
+	"net/url"
+	"strconv"
 
 	"github.com/Leon180/workingbad/internal/adapters/ai/mock"
 	"github.com/Leon180/workingbad/internal/domain"
@@ -69,6 +71,12 @@ func (s *Server) handleGoalAttach(w http.ResponseWriter, r *http.Request) {
 // from the header CTA that appears whenever the pending count is > 0.
 //
 // Route: POST /materialize
+//
+// Redirect target: the Referer header, normalised through safeRedirectPath
+// so an attacker-supplied Referer can't turn this into an open redirect.
+// Flash params (materialized/failed counts) are appended via net/url so
+// any embedded query string in the (already-validated) Referer round-trips
+// safely.
 func (s *Server) handleMaterialize(w http.ResponseWriter, r *http.Request) {
 	// Phase 1 ships the deterministic mock summarizer — same instance the
 	// CLI's `summarize` uses, so behaviour is identical across surfaces.
@@ -79,33 +87,37 @@ func (s *Server) handleMaterialize(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("materialize: %v", err), http.StatusInternalServerError)
 		return
 	}
-	// Redirect back to wherever the engineer was, falling back to /.
-	target := r.Header.Get("Referer")
-	if target == "" {
-		target = "/"
-	}
-	// Encode the materialise result into a flash-style query param so the
-	// landing page can show a brief success line without persistent state.
-	// Cheap signalling — same one-shot pattern Web apps have used forever.
-	target += joinSep(target) + fmt.Sprintf("materialized=%d&failed=%d", res.Materialized, res.Failed)
+
+	target := safeRedirectPath(r, r.Header.Get("Referer"), "/")
+	target = appendFlash(target, res.Materialized, res.Failed)
 	http.Redirect(w, r, target, http.StatusSeeOther)
 }
 
-// joinSep returns "?" if u has no query string yet, otherwise "&". A
-// minor formality but it keeps the redirect URL well-formed.
-func joinSep(u string) string {
-	for i := 0; i < len(u); i++ {
-		if u[i] == '?' {
-			return "&"
-		}
+// appendFlash adds materialized=N&failed=M to target's query string using
+// net/url so existing params are preserved and special chars escaped.
+func appendFlash(target string, materialized, failed int) string {
+	u, err := url.Parse(target)
+	if err != nil {
+		// safeRedirectPath gave us this, so a parse error here is internal
+		// confusion — fall back to root + flash.
+		return fmt.Sprintf("/?materialized=%d&failed=%d", materialized, failed)
 	}
-	return "?"
+	q := u.Query()
+	q.Set("materialized", strconv.Itoa(materialized))
+	q.Set("failed", strconv.Itoa(failed))
+	u.RawQuery = q.Encode()
+	return u.RequestURI()
 }
 
 // handleEdgeDetach marks a live part_of edge as detached.
 // Route: POST /edges/{id}/detach
 //
 // The form's hidden `goal_id` field tells us where to redirect after.
+// goal_id is REQUIRED (silent fallback to "/" was hiding template bugs
+// — the form always carries it, missing means something is wrong), and
+// it must be UUID-shaped before we embed it in a redirect path (raw
+// form input previously made "/goals/../../etc/passwd" → /etc/passwd
+// via browser normalisation).
 func (s *Server) handleEdgeDetach(w http.ResponseWriter, r *http.Request) {
 	edgeID := r.PathValue("id")
 	if edgeID == "" {
@@ -117,15 +129,15 @@ func (s *Server) handleEdgeDetach(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	goalID := r.FormValue("goal_id")
+	if goalID == "" {
+		http.Error(w, "goal_id is required", http.StatusBadRequest)
+		return
+	}
 
 	if err := s.svc.DetachFromGoal(r.Context(), edgeID); err != nil {
 		http.Error(w, fmt.Sprintf("detach: %v", err), http.StatusBadRequest)
 		return
 	}
 
-	target := "/"
-	if goalID != "" {
-		target = "/goals/" + goalID
-	}
-	http.Redirect(w, r, target, http.StatusSeeOther)
+	http.Redirect(w, r, safeGoalRedirect(goalID, "/"), http.StatusSeeOther)
 }
