@@ -36,3 +36,14 @@ SELECT rc.change_id, rc.repo_id, rc.patch_id, rc.ingested_at,
  WHERE sr.segment_id = ?
    AND EXISTS (SELECT 1 FROM raw_commits c WHERE c.change_id = rc.change_id AND c.is_current = 1)
  ORDER BY earliest_author_time ASC;
+
+-- name: SetSegmentTimeWindow :exec
+-- Caches MIN/MAX(raw_commits.author_time) across the segment's live changes
+-- onto the segments row. Called during materialise so subsequent at-time
+-- queries (e.g. "what segments cover 6/8 14:00?") can use the indexed column
+-- instead of re-aggregating raw_commits every read.
+UPDATE segments
+   SET occurred_at_min = ?,
+       occurred_at_max = ?,
+       updated_at = ?
+ WHERE id = ?;

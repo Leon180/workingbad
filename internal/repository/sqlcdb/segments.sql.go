@@ -164,6 +164,35 @@ func (q *Queries) MarkSegmentMaterialized(ctx context.Context, arg MarkSegmentMa
 	return err
 }
 
+const setSegmentTimeWindow = `-- name: SetSegmentTimeWindow :exec
+UPDATE segments
+   SET occurred_at_min = ?,
+       occurred_at_max = ?,
+       updated_at = ?
+ WHERE id = ?
+`
+
+type SetSegmentTimeWindowParams struct {
+	OccurredAtMin sql.NullString
+	OccurredAtMax sql.NullString
+	UpdatedAt     string
+	ID            string
+}
+
+// Caches MIN/MAX(raw_commits.author_time) across the segment's live changes
+// onto the segments row. Called during materialise so subsequent at-time
+// queries (e.g. "what segments cover 6/8 14:00?") can use the indexed column
+// instead of re-aggregating raw_commits every read.
+func (q *Queries) SetSegmentTimeWindow(ctx context.Context, arg SetSegmentTimeWindowParams) error {
+	_, err := q.db.ExecContext(ctx, setSegmentTimeWindow,
+		arg.OccurredAtMin,
+		arg.OccurredAtMax,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	return err
+}
+
 const updateSegment = `-- name: UpdateSegment :exec
 UPDATE segments
    SET summary_state = ?, anchor_patch_id = ?, metadata = ?,

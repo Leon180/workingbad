@@ -354,7 +354,7 @@ func (s *Service) materializeOne(ctx context.Context, seg domain.Segment, provid
 		return errors.New("repository: segment has no is_current raw_changes")
 	}
 	changes := make([]domain.RawChange, len(rawRows))
-	var earliestAuthor time.Time
+	var earliestAuthor, latestAuthor time.Time
 	for i, r := range rawRows {
 		ingested, perr := optNSToTime(r.IngestedAt)
 		if perr != nil {
@@ -367,15 +367,20 @@ func (s *Service) materializeOne(ctx context.Context, seg domain.Segment, provid
 			IngestedAt: ingested,
 		}
 		// earliest_author_time is computed by the SQL — capture the MIN across
-		// the change set so the synthesised activity entry's occurred_at can
-		// anchor to the source event time, not the materialise wall clock.
+		// the change set so the synthesised activity entry's occurred_at
+		// anchors to the source event time, not the materialise wall clock.
+		// Without this wiring (red team #1 / hunter P1), every re-summarize
+		// would drift activity.occurred_at to ingest time = bitemporal
+		// information loss.
 		if at, ok := earliestTimeFromAny(r.EarliestAuthorTime); ok {
 			if earliestAuthor.IsZero() || at.Before(earliestAuthor) {
 				earliestAuthor = at
 			}
+			if latestAuthor.IsZero() || at.After(latestAuthor) {
+				latestAuthor = at
+			}
 		}
 	}
-	_ = earliestAuthor // consumed in a later commit (#8 wires it into entry.OccurredAt)
 
 	title, body, err := provider.Summarize(ctx, changes)
 	if err != nil {
@@ -390,6 +395,15 @@ func (s *Service) materializeOne(ctx context.Context, seg domain.Segment, provid
 		SourceRef: seg.SourceRef,
 		Origin:    domain.OriginLocal,
 		RepoID:    seg.RepoID,
+		// Anchor activity occurred_at to the earliest git author_time across
+		// the segment's change set. Falls back to segments.occurred_at_min
+		// (legacy/orphan case), then to zero — stampTimes defaults it to
+		// now() if it's still zero at the write moment, with quality_degraded
+		// set so the read side knows the timestamp is not source-true.
+		OccurredAt: pickActivityOccurredAt(earliestAuthor, seg.OccurredAtMin),
+	}
+	if entry.OccurredAt.IsZero() {
+		entry.QualityDegraded = true
 	}
 	if err := validateEntry(entry); err != nil {
 		return err
@@ -412,6 +426,19 @@ func (s *Service) materializeOne(ctx context.Context, seg domain.Segment, provid
 	updatedRFC, ferr := formatRFC(time.Now().UTC())
 	if ferr != nil {
 		return fmt.Errorf("repository: format mark-materialized now: %w", ferr)
+	}
+	// Cache the work-window MIN/MAX on segments so future at-time queries
+	// don't have to re-aggregate raw_commits. Skipped silently when the join
+	// produced no signal (orphan segment) — column stays NULL.
+	if !earliestAuthor.IsZero() {
+		if err := qtx.SetSegmentTimeWindow(ctx, sqlcdb.SetSegmentTimeWindowParams{
+			OccurredAtMin: optTimeToNS(earliestAuthor),
+			OccurredAtMax: optTimeToNS(latestAuthor),
+			UpdatedAt:     updatedRFC,
+			ID:            seg.ID,
+		}); err != nil {
+			return fmt.Errorf("repository: cache segment time window: %w", err)
+		}
 	}
 	if err := qtx.MarkSegmentMaterialized(ctx, sqlcdb.MarkSegmentMaterializedParams{
 		SummaryState: string(domain.SummaryStateMaterialized),
@@ -466,6 +493,20 @@ func (s *Service) supersedeEntryInTx(ctx context.Context, qtx *sqlcdb.Queries, o
 		return err
 	}
 	replacement.LogicalID = old.LogicalID
+	// Bitemporal supersede inheritance (red team #2 in grill doc):
+	// the new version must keep the *original event time* unless the caller
+	// supplied a fresh OccurredAt (e.g. status change at a known moment).
+	// Without this, re-summarize / SetGoalStatus would drift occurred_at
+	// to now() on every write — defeating the entire bitemporal model.
+	if replacement.OccurredAt.IsZero() {
+		if parsed, perr := parseRFCWithFallback(old.OccurredAt, old.CreatedAt); perr == nil {
+			replacement.OccurredAt = parsed
+		}
+	}
+	// Version chain increments: optimistic-lock contract.
+	if oldVersion := nullInt64Or(old.Version, 1); replacement.Version <= 0 {
+		replacement.Version = int(oldVersion) + 1
+	}
 	now := time.Now().UTC()
 	stampTimes(replacement, now)
 	replacement.IsCurrent = true
@@ -501,6 +542,22 @@ func (s *Service) supersedeEntryInTx(ctx context.Context, qtx *sqlcdb.Queries, o
 	// This makes re-Summarize preserve attached goal views: a goal that had
 	// `part_of` from old activity now has `part_of` from new activity.
 	return rePointAllLiveEdges(ctx, qtx, oldID, replacement.ID)
+}
+
+// pickActivityOccurredAt returns the best signal we have for the synthesised
+// activity entry's event time, in order of trustworthiness:
+//   1. earliest joined raw_commits.author_time across the change set
+//   2. segments.occurred_at_min snapshot (UpsertSegment cached it)
+//   3. zero (caller decides whether to fall back to now and set
+//      QualityDegraded)
+func pickActivityOccurredAt(earliestAuthor, segMin time.Time) time.Time {
+	if !earliestAuthor.IsZero() {
+		return earliestAuthor
+	}
+	if !segMin.IsZero() {
+		return segMin
+	}
+	return time.Time{}
 }
 
 // listSegmentsNeedingMaterialize uses hand-written SQL because the optional
