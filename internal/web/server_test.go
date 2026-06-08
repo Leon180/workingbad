@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"html/template"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -132,6 +133,38 @@ func TestNewServer_BindsToLoopbackOnly(t *testing.T) {
 		t.Errorf("listener bound to %q, expected 127.0.0.1:*", srv2.Addr())
 	}
 	_ = srv // appease unused-var
+}
+
+// TestRenderPage_TemplateErrorReturnsCleanResponse proves the
+// buffer-then-write fix: a template that fails mid-render must emit a
+// clean 5xx response, NOT a partial 200 body with the error appended.
+//
+// The pre-fix bug: w.Header().Set("Content-Type") was called before
+// ExecuteTemplate started writing, so the status header + partial HTML
+// were already committed when http.Error tried to write a second body.
+// The buffer-then-write fix means template errors are caught before
+// the response is committed.
+func TestRenderPage_TemplateErrorReturnsCleanResponse(t *testing.T) {
+	srv := newTestServer(t)
+	// Inject a template that refers to a missing field — triggers a
+	// runtime template error mid-execution.
+	srv.templates["broken.html"] = template.Must(template.New("broken.html").
+		Parse(`{{define "base"}}<html>{{.Nope.Missing}}</html>{{end}}`))
+
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/", nil)
+	rec := httptest.NewRecorder()
+	srv.renderPage(rec, req, "broken.html", nil)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("template error should produce 500, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "<html>") {
+		t.Errorf("partial HTML leaked into response: %q", body)
+	}
+	if !strings.Contains(body, "template:") {
+		t.Errorf("error message missing: %q", body)
+	}
 }
 
 // Ensure context cancellation shuts the server down cleanly.

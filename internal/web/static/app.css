@@ -47,6 +47,7 @@ header nav a:hover { text-decoration: underline; }
   border: 1px solid #c08000;
   cursor: pointer;
 }
+.pending-err { color: #c00; font-weight: bold; font-size: 0.9rem; cursor: help; }
 
 main { padding: 2rem; max-width: 80rem; margin: 0 auto; }
 footer {

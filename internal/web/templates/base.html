@@ -18,7 +18,9 @@
       <a href="/new/decision">decision</a>
       <a href="/new/goal">goal</a>
     </nav>
-    {{if gt .Header.PendingSegments 0}}
+    {{if .Header.PendingErr}}
+    <span class="pending-cta pending-err" title="pending segments count query failed — see server logs">? pending segments</span>
+    {{else if gt .Header.PendingSegments 0}}
     <form method="post" action="/materialize" class="pending-cta">
       <span class="pending-count">{{.Header.PendingSegments}} pending segment{{if ne .Header.PendingSegments 1}}s{{end}}</span>
       <button type="submit">materialize now</button>

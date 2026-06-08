@@ -19,11 +19,13 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"fmt"
 	"html/template"
 	"io/fs"
+	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
@@ -127,21 +129,51 @@ func NewServer(svc *repository.Service, cfg config.Web) (*Server, error) {
 // global header info (pending segment count) before executing the
 // template. Centralising this avoids every handler having to fetch the
 // header count + populate every data struct separately.
+//
+// Two correctness invariants this method now enforces:
+//
+//  1. Template execution writes into a bytes.Buffer first. Pre-fix the
+//     Content-Type header was set on w before ExecuteTemplate started
+//     writing the body, so a mid-render template error left a partial
+//     HTML document followed by http.Error's plaintext appended into
+//     the same response body — the engineer saw garbled output with no
+//     visible signal of the failure (go-reviewer P1 / hunter P0).
+//
+//  2. CountPendingSegments errors are no longer silently zeroed. A
+//     locked DB or context-cancelled query previously produced a
+//     "nothing pending" header even though the count was actually
+//     unknown — silent confusing UX. The error is now logged AND
+//     surfaced on the envelope so templates can render an indicator.
 func (s *Server) renderPage(w http.ResponseWriter, r *http.Request, name string, page any) {
 	tmpl, ok := s.templates[name]
 	if !ok {
 		http.Error(w, "template: unknown page "+name, http.StatusInternalServerError)
 		return
 	}
-	pending, _ := s.svc.CountPendingSegments(r.Context(), repository.MaterializeScope{})
+
+	pending, pendErr := s.svc.CountPendingSegments(r.Context(), repository.MaterializeScope{})
+	if pendErr != nil {
+		// Don't fail the whole page render on a header-widget query — the
+		// engineer can still read the rest. Log it so it's observable, and
+		// surface a sentinel so the template can render "?" instead of "0".
+		slog.WarnContext(r.Context(), "count pending segments", "err", pendErr)
+	}
 	envelope := pageEnvelope{
-		Header: header{PendingSegments: pending},
-		Page:   page,
+		Header: header{
+			PendingSegments: pending,
+			PendingErr:      pendErr != nil,
+		},
+		Page: page,
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, "base", envelope); err != nil {
+		// Body untouched — safe to emit a clean 5xx.
+		http.Error(w, fmt.Sprintf("template: %v", err), http.StatusInternalServerError)
+		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := tmpl.ExecuteTemplate(w, "base", envelope); err != nil {
-		http.Error(w, fmt.Sprintf("template: %v", err), http.StatusInternalServerError)
-	}
+	_, _ = buf.WriteTo(w)
 }
 
 // pageEnvelope is what the base template actually receives. Templates
@@ -155,6 +187,7 @@ type pageEnvelope struct {
 
 type header struct {
 	PendingSegments int
+	PendingErr      bool // true when the count query failed; template can render "?"
 }
 
 // Addr is the actual bound address; useful for tests + the CLI startup
