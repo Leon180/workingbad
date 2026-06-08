@@ -55,3 +55,23 @@ table tbody tr:nth-child(even) { background: var(--row-alt); }
   margin-bottom: 1rem;
   border-radius: 4px;
 }
+
+.filter-bar {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  margin-bottom: 1.5rem;
+  padding: 0.75rem;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.filter-bar label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.8rem; color: var(--muted); }
+.filter-bar select, .filter-bar input { padding: 0.25rem 0.5rem; }
+.filter-bar button { padding: 0.4rem 0.9rem; cursor: pointer; }
+.filter-bar .reset { color: var(--muted); font-size: 0.85rem; margin-left: auto; }
+
+.time { font-size: 0.85rem; color: var(--muted); white-space: nowrap; }
+.id { font-size: 0.75rem; color: var(--muted); }
+.meta { color: var(--muted); font-size: 0.85rem; margin-top: 0.75rem; }
+.empty { color: var(--muted); margin: 2rem 0; }

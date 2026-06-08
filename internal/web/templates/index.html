@@ -1,6 +1,58 @@
 {{template "base" .}}
 {{define "content"}}
-<h1>workingbad</h1>
-<p>Local + LLM semantic truth source. Phase 1 dogfooding surface.</p>
-<p>List view, time-travel, and entry creation forms land in subsequent commits of Slice B.</p>
+<h1>entries</h1>
+
+<form method="get" action="/" class="filter-bar">
+  <label>
+    type
+    <select name="type" onchange="this.form.submit()">
+      <option value="">all</option>
+      {{- $active := .ActiveType }}
+      {{range .Types}}
+        <option value="{{.}}"{{if eq . $active}} selected{{end}}>{{.}}</option>
+      {{end}}
+    </select>
+  </label>
+  <label>
+    limit
+    <input type="number" name="limit" min="1" max="1000" value="{{.ActiveLimit}}" style="width: 5rem">
+  </label>
+  <button type="submit">apply</button>
+  {{if or .ActiveType (ne .ActiveLimit 50)}}
+    <a href="/" class="reset">reset</a>
+  {{end}}
+</form>
+
+{{if .Entries}}
+<table>
+  <thead>
+    <tr>
+      <th>type</th>
+      <th>status</th>
+      <th>title</th>
+      <th>occurred</th>
+      <th>ingested</th>
+      <th>v</th>
+      <th>id</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Entries}}
+    <tr>
+      <td>{{.Type}}</td>
+      <td>{{if .Status}}{{.Status}}{{else}}-{{end}}</td>
+      <td>{{.Title}}</td>
+      <td class="time">{{fmtTime .OccurredAt}}</td>
+      <td class="time">{{fmtTime .IngestedAt}}</td>
+      <td>v{{.Version}}</td>
+      <td class="id">{{.ID}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+<p class="meta">{{len .Entries}} entries</p>
+{{else}}
+<p class="empty">No entries match. <a href="/">clear filters</a> or create one via CLI:</p>
+<pre>workingbad note "title here"</pre>
+{{end}}
 {{end}}
