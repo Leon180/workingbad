@@ -1,0 +1,25 @@
+{{define "base"}}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  {{/* htmx is loaded only when a later view actually uses it — base layout stays JS-free. */}}
+</head>
+<body>
+  <header>
+    <a href="/" class="brand">workingbad</a>
+    <nav>
+      <a href="/">entries</a>
+    </nav>
+  </header>
+  <main>
+    {{template "content" .}}
+  </main>
+  <footer>
+    <span>local truth source · 127.0.0.1 only</span>
+  </footer>
+</body>
+</html>
+{{end}}

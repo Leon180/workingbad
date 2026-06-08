@@ -25,6 +25,14 @@ func allCommands() []*cli.Command {
 	return []*cli.Command{
 		{Name: "migrate", Usage: "apply forward-only migrations and exit; reports applied version", Action: actionMigrate},
 		{Name: "version", Usage: "print binary and (if available) migration version", Action: actionVersion},
+		{
+			Name:  "serve",
+			Usage: "start the localhost Web UI (127.0.0.1 only)",
+			Flags: []cli.Flag{
+				&cli.IntFlag{Name: "port", Usage: "override the configured port (default from config.yaml)"},
+			},
+			Action: actionServe,
+		},
 
 		// Phase 1 dogfooding surface.
 		{

@@ -1,0 +1,57 @@
+/* Minimal, semantic, no framework. Phase 1 dogfooding aesthetics —
+   readability over polish. Slice B+ can refine; the structure stays.
+*/
+:root {
+  --fg: #1a1a1a;
+  --bg: #fafafa;
+  --muted: #666;
+  --accent: #0066cc;
+  --border: #e0e0e0;
+  --row-alt: #f4f4f4;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  color: var(--fg);
+  background: var(--bg);
+  line-height: 1.5;
+}
+
+header {
+  display: flex;
+  align-items: baseline;
+  gap: 2rem;
+  padding: 1rem 2rem;
+  border-bottom: 1px solid var(--border);
+}
+header .brand {
+  font-weight: bold;
+  text-decoration: none;
+  color: var(--fg);
+}
+header nav a { margin-right: 1rem; color: var(--accent); text-decoration: none; }
+header nav a:hover { text-decoration: underline; }
+
+main { padding: 2rem; max-width: 80rem; margin: 0 auto; }
+footer {
+  padding: 1rem 2rem;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+h1, h2, h3 { margin-top: 0; }
+
+table { border-collapse: collapse; width: 100%; }
+table th, table td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid var(--border); }
+table tbody tr:nth-child(even) { background: var(--row-alt); }
+
+.banner {
+  padding: 0.75rem 1rem;
+  background: #fff8dc;
+  border: 1px solid #d4c97a;
+  margin-bottom: 1rem;
+  border-radius: 4px;
+}
