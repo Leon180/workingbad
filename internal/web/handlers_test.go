@@ -198,6 +198,100 @@ func TestGoalDetail_RejectsNonGoal(t *testing.T) {
 	}
 }
 
+// TestNewForm_RendersEmpty seeds nothing then GETs the form page; it must
+// 200 and contain the type-specific copy.
+func TestNewForm_RendersEmpty(t *testing.T) {
+	srv := newTestServer(t)
+	for _, typ := range []string{"research", "decision", "goal"} {
+		t.Run(typ, func(t *testing.T) {
+			body := getBody(t, srv, "/new/"+typ)
+			if !strings.Contains(body, "new "+typ) {
+				t.Errorf("missing heading for type %q", typ)
+			}
+			if !strings.Contains(body, `name="title"`) {
+				t.Error("title field missing")
+			}
+		})
+	}
+}
+
+func TestNewForm_RejectsUnknownType(t *testing.T) {
+	srv := newTestServer(t)
+	rec := getRec(t, srv, "/new/banana")
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for unknown type, got %d", rec.Code)
+	}
+}
+
+// TestNewSubmit_CreatesAndRedirects walks the happy path: POST title+body,
+// follow the redirect, confirm the entry is persisted + visible.
+func TestNewSubmit_CreatesAndRedirects(t *testing.T) {
+	srv := newTestServer(t)
+	form := "title=Investigate+sqlc&body=Worth+the+setup+pain%3F"
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/new/research",
+		strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	loc := rec.Header().Get("Location")
+	if !strings.HasPrefix(loc, "/entries/") {
+		t.Errorf("redirect target wrong: %q", loc)
+	}
+
+	// Follow redirect — entry must be reachable.
+	body := getBody(t, srv, loc)
+	if !strings.Contains(body, "Investigate sqlc") {
+		t.Errorf("created entry not visible on follow: %q", body)
+	}
+}
+
+// TestNewSubmit_GoalRedirectsToGoalDetail — goals go to /goals/{id} so the
+// attached-activities view is the first thing the engineer sees after
+// creating one.
+func TestNewSubmit_GoalRedirectsToGoalDetail(t *testing.T) {
+	srv := newTestServer(t)
+	form := "title=Ship+Slice+B"
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/new/goal",
+		strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d", rec.Code)
+	}
+	loc := rec.Header().Get("Location")
+	if !strings.HasPrefix(loc, "/goals/") {
+		t.Errorf("goal redirect target wrong: %q", loc)
+	}
+}
+
+// TestNewSubmit_RequiresTitle — empty title re-renders the form with the
+// error banner + the body preserved.
+func TestNewSubmit_RequiresTitle(t *testing.T) {
+	srv := newTestServer(t)
+	form := "title=&body=Body+without+a+title"
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/new/research",
+		strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200 (re-render), got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "title is required") {
+		t.Errorf("missing error banner")
+	}
+	if !strings.Contains(rec.Body.String(), "Body without a title") {
+		t.Error("body should be preserved on re-render")
+	}
+}
+
 // TestIndex_EmptyState renders the friendly "no entries" copy + the CLI
 // hint without crashing on a zero-row list.
 func TestIndex_EmptyState(t *testing.T) {
