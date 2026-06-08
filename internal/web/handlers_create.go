@@ -28,7 +28,7 @@ func (s *Server) handleNewForm(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown type: "+string(typ), http.StatusBadRequest)
 		return
 	}
-	s.render(w, "new_entry.html", newEntryData{
+	s.renderPage(w, r, "new_entry.html", newEntryData{
 		Title: "workingbad — new " + string(typ),
 		Type:  typ,
 	})
@@ -53,7 +53,7 @@ func (s *Server) handleNewSubmit(w http.ResponseWriter, r *http.Request) {
 	body := strings.TrimSpace(r.FormValue("body"))
 	if title == "" {
 		// Re-render the form with the user's body preserved + an error.
-		s.render(w, "new_entry.html", newEntryData{
+		s.renderPage(w, r, "new_entry.html", newEntryData{
 			Title:   "workingbad — new " + string(typ),
 			Type:    typ,
 			Body:    body,
@@ -79,7 +79,7 @@ func (s *Server) handleNewSubmit(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// Validator errors (e.g. body too long if we ever add a cap) come
 		// back here. Surface them inline rather than 500ing.
-		s.render(w, "new_entry.html", newEntryData{
+		s.renderPage(w, r, "new_entry.html", newEntryData{
 			Title:   "workingbad — new " + string(typ),
 			Type:    typ,
 			TitleIn: title,

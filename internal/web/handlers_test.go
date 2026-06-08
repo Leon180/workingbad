@@ -395,6 +395,89 @@ func TestGoalAttach_MissingEntryID_400(t *testing.T) {
 	}
 }
 
+// TestHeader_NoPendingCTAWhenZero — clean DB shows no CTA in the nav bar.
+func TestHeader_NoPendingCTAWhenZero(t *testing.T) {
+	srv := newTestServer(t)
+	body := getBody(t, srv, "/")
+	if strings.Contains(body, "materialize now") {
+		t.Error("materialize CTA should not appear when nothing is pending")
+	}
+}
+
+// TestHeader_ShowsPendingCTAWhenSegmentsExist — seed a pending segment,
+// then load the index and assert the CTA + count are rendered.
+func TestHeader_ShowsPendingCTAWhenSegmentsExist(t *testing.T) {
+	srv := newTestServer(t)
+	ctx := context.Background()
+	seedPendingSegment(t, srv, ctx, "repo-1", "ref-tt-pending", "patch-tt", "sha-tt")
+
+	body := getBody(t, srv, "/")
+	if !strings.Contains(body, "materialize now") {
+		t.Error("materialize CTA missing")
+	}
+	if !strings.Contains(body, "1 pending segment") {
+		t.Errorf("count missing or wrong: %q", body)
+	}
+}
+
+// TestMaterialize_ProcessesAndRedirects — POST /materialize runs
+// BatchMaterialize and redirects with the result in the query string.
+func TestMaterialize_ProcessesAndRedirects(t *testing.T) {
+	srv := newTestServer(t)
+	ctx := context.Background()
+	seedPendingSegment(t, srv, ctx, "repo-2", "ref-mat", "patch-mat", "sha-mat")
+
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/materialize", nil)
+	req.Header.Set("Referer", "http://127.0.0.1/")
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status=%d, want 303 (body=%s)", rec.Code, rec.Body.String())
+	}
+	loc := rec.Header().Get("Location")
+	if !strings.Contains(loc, "materialized=1") {
+		t.Errorf("redirect should carry materialized count, got %q", loc)
+	}
+
+	// Pending count should drop to 0 after materialize.
+	body := getBody(t, srv, "/")
+	if strings.Contains(body, "materialize now") {
+		t.Error("pending CTA should be gone after materialize")
+	}
+}
+
+// seedPendingSegment is the test helper for the materialize tests. Inserts
+// a segment + a raw commit + the link row so BatchMaterialize has work
+// to do. UpsertSegment returns the segment with its assigned id, so we
+// don't need to reach into the repository's private *sql.DB to look it
+// up.
+func seedPendingSegment(t *testing.T, srv *Server, ctx context.Context, repo, sourceRef, patchID, sha string) {
+	t.Helper()
+	seg, err := srv.svc.UpsertSegment(ctx, domain.Segment{
+		RepoID:        repo,
+		Source:        domain.SourceGit,
+		SourceRef:     sourceRef,
+		AnchorPatchID: patchID,
+	})
+	if err != nil {
+		t.Fatalf("UpsertSegment: %v", err)
+	}
+	now := time.Now().UTC()
+	ch, err := srv.svc.UpsertRaw(ctx, domain.RawCommit{
+		SHA: sha, RepoID: repo,
+		Author: "alice", Committer: "alice",
+		AuthorTime: now, CommitTime: now,
+		Message: "seeded for materialize",
+	}, patchID)
+	if err != nil {
+		t.Fatalf("UpsertRaw: %v", err)
+	}
+	if err := srv.svc.LinkSegmentRaw(ctx, seg.ID, ch.ChangeID); err != nil {
+		t.Fatalf("LinkSegmentRaw: %v", err)
+	}
+}
+
 // TestIndex_EmptyState renders the friendly "no entries" copy + the CLI
 // hint without crashing on a zero-row list.
 func TestIndex_EmptyState(t *testing.T) {

@@ -34,6 +34,20 @@ header .brand {
 header nav a { margin-right: 1rem; color: var(--accent); text-decoration: none; }
 header nav a:hover { text-decoration: underline; }
 
+.pending-cta {
+  margin-left: auto;
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+.pending-count { color: #c08000; font-weight: bold; font-size: 0.9rem; }
+.pending-cta button {
+  padding: 0.35rem 0.85rem;
+  background: #fff3d6;
+  border: 1px solid #c08000;
+  cursor: pointer;
+}
+
 main { padding: 2rem; max-width: 80rem; margin: 0 auto; }
 footer {
   padding: 1rem 2rem;
@@ -60,6 +74,7 @@ table tbody tr:nth-child(even) { background: var(--row-alt); }
 }
 .banner.timetravel { background: #e8f0ff; border-color: #99b8e8; }
 .banner.error { background: #ffe8e8; border-color: #d88; color: #800; }
+.banner.success { background: #e8f8e8; border-color: #88c088; color: #060; }
 .banner .reset { margin-left: auto; color: var(--accent); text-decoration: none; }
 .banner .reset:hover { text-decoration: underline; }
 

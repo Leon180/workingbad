@@ -61,27 +61,31 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := listData{
-		Title:       "workingbad — entries",
-		Entries:     entries,
-		Types:       allEntryTypes,
-		ActiveType:  filter.Type,
-		ActiveLimit: filter.Limit,
-		ActiveAt:    atStr,
-		AsOf:        asOf,
-		AtParseErr:  asOfErrString(atStr, asOfErr),
+		Title:           "workingbad — entries",
+		Entries:         entries,
+		Types:           allEntryTypes,
+		ActiveType:      filter.Type,
+		ActiveLimit:     filter.Limit,
+		ActiveAt:        atStr,
+		AsOf:            asOf,
+		AtParseErr:      asOfErrString(atStr, asOfErr),
+		MaterializedNum: r.URL.Query().Get("materialized"),
+		FailedNum:       r.URL.Query().Get("failed"),
 	}
-	s.render(w, "index.html", data)
+	s.renderPage(w, r, "index.html", data)
 }
 
 type listData struct {
-	Title       string
-	Entries     []domain.Entry
-	Types       []domain.EntryType
-	ActiveType  domain.EntryType
-	ActiveLimit int
-	ActiveAt    string    // raw query value, echoed into the form input
-	AsOf        time.Time // parsed (zero when ActiveAt is "" or unparseable)
-	AtParseErr  string    // human-readable; empty when ActiveAt is blank or parsed OK
+	Title           string
+	Entries         []domain.Entry
+	Types           []domain.EntryType
+	ActiveType      domain.EntryType
+	ActiveLimit     int
+	ActiveAt        string    // raw query value, echoed into the form input
+	AsOf            time.Time // parsed (zero when ActiveAt is "" or unparseable)
+	AtParseErr      string    // human-readable; empty when ActiveAt is blank or parsed OK
+	MaterializedNum string    // ?materialized=N flash param after /materialize POST
+	FailedNum       string    // ?failed=N companion to MaterializedNum
 }
 
 // parseAtParam accepts the same shapes as the CLI's --at flag:

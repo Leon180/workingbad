@@ -2,6 +2,10 @@
 {{define "content"}}
 <h1>entries</h1>
 
+{{if .MaterializedNum}}
+<div class="banner success">materialized {{.MaterializedNum}} segment{{if ne .MaterializedNum "1"}}s{{end}}{{if and .FailedNum (ne .FailedNum "0")}}, {{.FailedNum}} failed{{end}}</div>
+{{end}}
+
 {{if .AtParseErr}}
 <div class="banner error">at parse error: {{.AtParseErr}} — showing live entries</div>
 {{else if not .AsOf.IsZero}}

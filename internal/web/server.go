@@ -89,6 +89,7 @@ func NewServer(svc *repository.Service, cfg config.Web) (*Server, error) {
 	s.mux.HandleFunc("POST /goals/{id}/status", s.handleGoalStatus)
 	s.mux.HandleFunc("POST /goals/{id}/attach", s.handleGoalAttach)
 	s.mux.HandleFunc("POST /edges/{id}/detach", s.handleEdgeDetach)
+	s.mux.HandleFunc("POST /materialize", s.handleMaterialize)
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
@@ -122,20 +123,38 @@ func NewServer(svc *repository.Service, cfg config.Web) (*Server, error) {
 	return s, nil
 }
 
-// render executes the named page template against w. Every handler routes
-// through here so error handling stays uniform (5xx with template-source
-// detail in the body, since this is a single-user localhost UI and the
-// detail helps debugging more than it leaks anything).
-func (s *Server) render(w http.ResponseWriter, name string, data any) {
+// renderPage wraps the page-specific data in a pageEnvelope that carries
+// global header info (pending segment count) before executing the
+// template. Centralising this avoids every handler having to fetch the
+// header count + populate every data struct separately.
+func (s *Server) renderPage(w http.ResponseWriter, r *http.Request, name string, page any) {
 	tmpl, ok := s.templates[name]
 	if !ok {
 		http.Error(w, "template: unknown page "+name, http.StatusInternalServerError)
 		return
 	}
+	pending, _ := s.svc.CountPendingSegments(r.Context(), repository.MaterializeScope{})
+	envelope := pageEnvelope{
+		Header: header{PendingSegments: pending},
+		Page:   page,
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := tmpl.ExecuteTemplate(w, "base", data); err != nil {
+	if err := tmpl.ExecuteTemplate(w, "base", envelope); err != nil {
 		http.Error(w, fmt.Sprintf("template: %v", err), http.StatusInternalServerError)
 	}
+}
+
+// pageEnvelope is what the base template actually receives. Templates
+// access {{.Header.PendingSegments}} for the nav bar and {{.Page.Foo}}
+// for everything else; this keeps the page data type-safe per route
+// while sharing the global header.
+type pageEnvelope struct {
+	Header header
+	Page   any
+}
+
+type header struct {
+	PendingSegments int
 }
 
 // Addr is the actual bound address; useful for tests + the CLI startup

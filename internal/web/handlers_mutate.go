@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/Leon180/workingbad/internal/adapters/ai/mock"
 	"github.com/Leon180/workingbad/internal/domain"
+	"github.com/Leon180/workingbad/internal/repository"
 )
 
 // handleGoalStatus changes a goal's status by superseding it. New version
@@ -60,6 +62,44 @@ func (s *Server) handleGoalAttach(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/goals/"+goalID, http.StatusSeeOther)
+}
+
+// handleMaterialize processes all pending segments via the mock AIProvider.
+// Phase 1 only: the real local/api providers arrive in Phase 3. Triggered
+// from the header CTA that appears whenever the pending count is > 0.
+//
+// Route: POST /materialize
+func (s *Server) handleMaterialize(w http.ResponseWriter, r *http.Request) {
+	// Phase 1 ships the deterministic mock summarizer — same instance the
+	// CLI's `summarize` uses, so behaviour is identical across surfaces.
+	provider := mock.New()
+
+	res, err := s.svc.BatchMaterialize(r.Context(), repository.MaterializeScope{}, provider)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("materialize: %v", err), http.StatusInternalServerError)
+		return
+	}
+	// Redirect back to wherever the engineer was, falling back to /.
+	target := r.Header.Get("Referer")
+	if target == "" {
+		target = "/"
+	}
+	// Encode the materialise result into a flash-style query param so the
+	// landing page can show a brief success line without persistent state.
+	// Cheap signalling — same one-shot pattern Web apps have used forever.
+	target += joinSep(target) + fmt.Sprintf("materialized=%d&failed=%d", res.Materialized, res.Failed)
+	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
+// joinSep returns "?" if u has no query string yet, otherwise "&". A
+// minor formality but it keeps the redirect URL well-formed.
+func joinSep(u string) string {
+	for i := 0; i < len(u); i++ {
+		if u[i] == '?' {
+			return "&"
+		}
+	}
+	return "?"
 }
 
 // handleEdgeDetach marks a live part_of edge as detached.

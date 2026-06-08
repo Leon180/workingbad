@@ -42,7 +42,7 @@ func (s *Server) handleEntryDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.render(w, "entry_detail.html", entryDetailData{
+	s.renderPage(w, r, "entry_detail.html", entryDetailData{
 		Title:   "workingbad — " + live.Title,
 		Live:    live,
 		History: history,
@@ -92,7 +92,7 @@ func (s *Server) handleGoalDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.render(w, "goal_detail.html", goalDetailData{
+	s.renderPage(w, r, "goal_detail.html", goalDetailData{
 		Title:         "workingbad — " + live.Title,
 		Goal:          live,
 		Attached:      attached,

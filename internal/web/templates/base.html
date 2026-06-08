@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{.Title}}</title>
+  <title>{{.Page.Title}}</title>
   <link rel="stylesheet" href="/static/app.css">
   {{/* htmx is loaded only when a later view actually uses it — base layout stays JS-free. */}}
 </head>
@@ -18,9 +18,15 @@
       <a href="/new/decision">decision</a>
       <a href="/new/goal">goal</a>
     </nav>
+    {{if gt .Header.PendingSegments 0}}
+    <form method="post" action="/materialize" class="pending-cta">
+      <span class="pending-count">{{.Header.PendingSegments}} pending segment{{if ne .Header.PendingSegments 1}}s{{end}}</span>
+      <button type="submit">materialize now</button>
+    </form>
+    {{end}}
   </header>
   <main>
-    {{template "content" .}}
+    {{template "content" .Page}}
   </main>
   <footer>
     <span>local truth source · 127.0.0.1 only</span>
