@@ -473,12 +473,25 @@ func (s *Service) insertEntryInTx(ctx context.Context, qtx *sqlcdb.Queries, e *d
 	return nil
 }
 
-// supersedeEntryInTx flips an existing is_current=1 entry to superseded,
-// removes its FTS row, writes the replacement, and re-points every live
-// edge (both directions) — all inside the supplied tx.
+// supersedeEntryInTx is the legacy entry point (expectedVersion = 0) for
+// callers that still use the original 3-arg supersede contract (notably
+// materializeOne and SetGoalStatus). New callers should use
+// supersedeEntryInTxWithExpected directly to participate in the
+// optimistic-lock protocol.
+func (s *Service) supersedeEntryInTx(ctx context.Context, qtx *sqlcdb.Queries, oldID string, replacement *domain.Entry) error {
+	return s.supersedeEntryInTxWithExpected(ctx, qtx, oldID, 0, replacement)
+}
+
+// supersedeEntryInTxWithExpected flips an existing is_current=1 entry to
+// superseded, removes its FTS row, writes the replacement, and re-points
+// every live edge (both directions) — all inside the supplied tx.
+//
+// expectedVersion enforces optimistic locking when > 0: if the live row's
+// Version does not match, the call fails with ErrVersionConflict and the
+// tx must roll back. Pass 0 to skip (single-writer / legacy callers).
 //
 // Returns an error if oldID does not exist or is not the live version.
-func (s *Service) supersedeEntryInTx(ctx context.Context, qtx *sqlcdb.Queries, oldID string, replacement *domain.Entry) error {
+func (s *Service) supersedeEntryInTxWithExpected(ctx context.Context, qtx *sqlcdb.Queries, oldID string, expectedVersion int, replacement *domain.Entry) error {
 	old, err := qtx.GetEntryByID(ctx, oldID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("repository: old entry %q not found", oldID)
@@ -488,6 +501,12 @@ func (s *Service) supersedeEntryInTx(ctx context.Context, qtx *sqlcdb.Queries, o
 	}
 	if old.IsCurrent != 1 {
 		return fmt.Errorf("repository: old entry %q is not current", oldID)
+	}
+	if expectedVersion > 0 {
+		liveVersion := int(nullInt64Or(old.Version, 1))
+		if liveVersion != expectedVersion {
+			return fmt.Errorf("%w: expected %d, got %d", ErrVersionConflict, expectedVersion, liveVersion)
+		}
 	}
 	if err := assignNewIDs(replacement); err != nil {
 		return err

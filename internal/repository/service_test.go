@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 	"testing"
 
@@ -143,7 +144,7 @@ func TestSupersede_ShareLogicalIDFlipIsCurrent(t *testing.T) {
 		t.Fatalf("v1: %v", err)
 	}
 
-	v2, err := s.Supersede(ctx(t), v1.ID, domain.Entry{
+	v2, err := s.Supersede(ctx(t), v1.ID, 0, domain.Entry{
 		Type: domain.EntryTypeResearch, Origin: domain.OriginLocal,
 		Source: domain.SourceManual, SourceRef: "hash-2",
 		Title: "Revised investigation", Body: "v2 body",
@@ -193,7 +194,7 @@ func TestSupersede_FTSMirrorsLatest(t *testing.T) {
 		Source: domain.SourceManual, SourceRef: "h1",
 		Title: "Antiquated finding", Body: "...",
 	})
-	if _, err := s.Supersede(ctx(t), v1.ID, domain.Entry{
+	if _, err := s.Supersede(ctx(t), v1.ID, 0, domain.Entry{
 		Type: domain.EntryTypeResearch, Origin: domain.OriginLocal,
 		Source: domain.SourceManual, SourceRef: "h2",
 		Title: "Refreshed conclusion", Body: "...",
@@ -211,7 +212,7 @@ func TestSupersede_FTSMirrorsLatest(t *testing.T) {
 
 func TestSupersede_OldMissing(t *testing.T) {
 	s := newService(t)
-	_, err := s.Supersede(ctx(t), "00000000-0000-7000-8000-000000000000", domain.Entry{
+	_, err := s.Supersede(ctx(t), "00000000-0000-7000-8000-000000000000", 0, domain.Entry{
 		Type: domain.EntryTypeResearch, Origin: domain.OriginLocal,
 		Source: domain.SourceManual, SourceRef: "h", Title: "x",
 	})
@@ -241,7 +242,7 @@ func TestSupersede_RePointsOutgoingEdges(t *testing.T) {
 		t.Fatalf("attach: %v", err)
 	}
 
-	v2, err := s.Supersede(ctx(t), v1.ID, domain.Entry{
+	v2, err := s.Supersede(ctx(t), v1.ID, 0, domain.Entry{
 		Type: domain.EntryTypeResearch, Origin: domain.OriginLocal,
 		Source: domain.SourceManual, SourceRef: "h-out-2",
 		Title: "v2",
@@ -308,7 +309,7 @@ func TestSupersede_RePointsBothDirections(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	v2, err := s.Supersede(ctx(t), middle.ID, domain.Entry{
+	v2, err := s.Supersede(ctx(t), middle.ID, 0, domain.Entry{
 		Type: domain.EntryTypeResearch, Origin: domain.OriginLocal,
 		Source: domain.SourceManual, SourceRef: "mid-v2",
 		Title: "middle v2",
@@ -357,7 +358,7 @@ func TestSupersede_NoEdgesIsNoOp(t *testing.T) {
 		Source: domain.SourceManual, SourceRef: "h-noedge",
 		Title: "alone",
 	})
-	if _, err := s.Supersede(ctx(t), v1.ID, domain.Entry{
+	if _, err := s.Supersede(ctx(t), v1.ID, 0, domain.Entry{
 		Type: domain.EntryTypeResearch, Origin: domain.OriginLocal,
 		Source: domain.SourceManual, SourceRef: "h-noedge-v2",
 		Title: "alone v2",
@@ -372,7 +373,7 @@ func TestSupersede_NotCurrentRejected(t *testing.T) {
 		Type: domain.EntryTypeResearch, Origin: domain.OriginLocal,
 		Source: domain.SourceManual, SourceRef: "h1", Title: "first",
 	})
-	_, err := s.Supersede(ctx(t), v1.ID, domain.Entry{
+	_, err := s.Supersede(ctx(t), v1.ID, 0, domain.Entry{
 		Type: domain.EntryTypeResearch, Origin: domain.OriginLocal,
 		Source: domain.SourceManual, SourceRef: "h2", Title: "second",
 	})
@@ -380,12 +381,64 @@ func TestSupersede_NotCurrentRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Attempting to supersede v1 again should fail — it's no longer current.
-	_, err = s.Supersede(ctx(t), v1.ID, domain.Entry{
+	_, err = s.Supersede(ctx(t), v1.ID, 0, domain.Entry{
 		Type: domain.EntryTypeResearch, Origin: domain.OriginLocal,
 		Source: domain.SourceManual, SourceRef: "h3", Title: "third",
 	})
 	if err == nil {
 		t.Error("expected error: cannot supersede non-current entry")
+	}
+}
+
+// TestSupersede_OptimisticLockMismatch proves that the optimistic-lock
+// contract works: superseding with an expected_version that does not match
+// the live row's Version returns ErrVersionConflict. Phase 1 single-writer
+// has no real race today, but the structure is in place for Phase 2 sync
+// workers (red team #1 in grill doc).
+func TestSupersede_OptimisticLockMismatch(t *testing.T) {
+	s := newService(t)
+
+	v1, _ := s.InsertEntry(ctx(t), domain.Entry{
+		Type: domain.EntryTypeResearch, Origin: domain.OriginLocal,
+		Source: domain.SourceManual, SourceRef: "lock-1",
+		Title: "v1",
+	})
+
+	// v1 starts at Version=1. Passing expectedVersion=99 must fail loudly,
+	// not silently succeed (the latter would be the silent-failure pattern
+	// the design exists to prevent).
+	_, err := s.Supersede(ctx(t), v1.ID, 99, domain.Entry{
+		Type: domain.EntryTypeResearch, Origin: domain.OriginLocal,
+		Source: domain.SourceManual, SourceRef: "lock-2",
+		Title: "v2",
+	})
+	if err == nil {
+		t.Fatal("expected ErrVersionConflict, got nil")
+	}
+	if !errors.Is(err, ErrVersionConflict) {
+		t.Errorf("expected ErrVersionConflict, got %v", err)
+	}
+}
+
+func TestSupersede_OptimisticLockMatch(t *testing.T) {
+	s := newService(t)
+
+	v1, _ := s.InsertEntry(ctx(t), domain.Entry{
+		Type: domain.EntryTypeResearch, Origin: domain.OriginLocal,
+		Source: domain.SourceManual, SourceRef: "lock-m-1",
+		Title: "v1",
+	})
+
+	v2, err := s.Supersede(ctx(t), v1.ID, v1.Version, domain.Entry{
+		Type: domain.EntryTypeResearch, Origin: domain.OriginLocal,
+		Source: domain.SourceManual, SourceRef: "lock-m-2",
+		Title: "v2",
+	})
+	if err != nil {
+		t.Fatalf("Supersede with matching version: %v", err)
+	}
+	if v2.Version != v1.Version+1 {
+		t.Errorf("v2.Version = %d, want %d (chain increment)", v2.Version, v1.Version+1)
 	}
 }
 

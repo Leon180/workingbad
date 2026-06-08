@@ -15,7 +15,7 @@ func TestListEntries_OnlyCurrent(t *testing.T) {
 		Type: domain.EntryTypeResearch, Origin: domain.OriginLocal,
 		Source: domain.SourceManual, SourceRef: "h1", Title: "first",
 	})
-	if _, err := s.Supersede(ctx(t), v1.ID, domain.Entry{
+	if _, err := s.Supersede(ctx(t), v1.ID, 0, domain.Entry{
 		Type: domain.EntryTypeResearch, Origin: domain.OriginLocal,
 		Source: domain.SourceManual, SourceRef: "h2", Title: "second",
 	}); err != nil {

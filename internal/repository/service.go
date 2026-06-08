@@ -45,6 +45,9 @@ func (s *Service) InsertEntry(ctx context.Context, e domain.Entry) (domain.Entry
 	}
 	stampTimes(&e, time.Now().UTC())
 	e.IsCurrent = true
+	if e.Version <= 0 {
+		e.Version = 1
+	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -71,14 +74,26 @@ func (s *Service) InsertEntry(ctx context.Context, e domain.Entry) (domain.Entry
 	return e, nil
 }
 
+// ErrVersionConflict is returned by Supersede when expectedVersion does not
+// match the live row's Version. This is the optimistic-lock contract: two
+// concurrent supersede attempts based on the same expected_version cannot
+// both succeed; the loser must re-read and retry. Phase 1 single-writer
+// SQLite has no real race today, but the structure is in place for Phase 2
+// concurrent sync workers (red team #1 in grill doc).
+var ErrVersionConflict = errors.New("repository: supersede version conflict")
+
 // Supersede appends a new entry version that replaces oldID. The replacement
-// inherits LogicalID from the old entry, the old entry is marked superseded,
-// FTS5 is updated, and every live edge touching oldID is re-pointed at the
-// new id (both incoming and outgoing) — all in one transaction.
+// inherits LogicalID + OccurredAt from the old entry, the old entry is
+// marked superseded, FTS5 is updated, and every live edge touching oldID is
+// re-pointed at the new id (both incoming and outgoing) — all in one tx.
 //
-// Delegates the bulk of the work to supersedeEntryInTx so service.Supersede /
-// materializeOne / SetGoalStatus all share the same supersede behaviour.
-func (s *Service) Supersede(ctx context.Context, oldID string, replacement domain.Entry) (domain.Entry, error) {
+// expectedVersion is the optimistic lock: pass 0 to skip the check (legacy
+// path / single-writer), pass the value the caller observed when reading
+// the live row to detect concurrent writes.
+//
+// Delegates to supersedeEntryInTx so materializeOne / SetGoalStatus all
+// share the same supersede behaviour.
+func (s *Service) Supersede(ctx context.Context, oldID string, expectedVersion int, replacement domain.Entry) (domain.Entry, error) {
 	if err := validateEntry(replacement); err != nil {
 		return domain.Entry{}, err
 	}
@@ -90,7 +105,7 @@ func (s *Service) Supersede(ctx context.Context, oldID string, replacement domai
 	defer func() { _ = tx.Rollback() }()
 
 	qtx := s.q.WithTx(tx)
-	if err := s.supersedeEntryInTx(ctx, qtx, oldID, &replacement); err != nil {
+	if err := s.supersedeEntryInTxWithExpected(ctx, qtx, oldID, expectedVersion, &replacement); err != nil {
 		return domain.Entry{}, err
 	}
 	if err := tx.Commit(); err != nil {
