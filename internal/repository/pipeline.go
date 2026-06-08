@@ -406,7 +406,7 @@ func (s *Service) materializeOne(ctx context.Context, seg domain.Segment, provid
 		entry.QualityDegraded = true
 	}
 	if err := validateEntry(entry); err != nil {
-		return err
+		return fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
 
 	existingID, err := qtx.GetLiveActivityForSegment(ctx, stringToNS(seg.SourceRef))
@@ -494,13 +494,13 @@ func (s *Service) supersedeEntryInTx(ctx context.Context, qtx *sqlcdb.Queries, o
 func (s *Service) supersedeEntryInTxWithExpected(ctx context.Context, qtx *sqlcdb.Queries, oldID string, expectedVersion int, replacement *domain.Entry) error {
 	old, err := qtx.GetEntryByID(ctx, oldID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("repository: old entry %q not found", oldID)
+		return fmt.Errorf("repository: old entry %q not found: %w", oldID, ErrNotFound)
 	}
 	if err != nil {
 		return fmt.Errorf("repository: load supersede target: %w", err)
 	}
 	if old.IsCurrent != 1 {
-		return fmt.Errorf("repository: old entry %q is not current", oldID)
+		return fmt.Errorf("repository: old entry %q is not current: %w", oldID, ErrNotFound)
 	}
 	if expectedVersion > 0 {
 		liveVersion := int(nullInt64Or(old.Version, 1))

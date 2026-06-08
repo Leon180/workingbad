@@ -32,7 +32,7 @@ func (s *Server) handleGoalStatus(w http.ResponseWriter, r *http.Request) {
 
 	newGoal, err := s.svc.SetGoalStatus(r.Context(), id, status)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("set status: %v", err), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("set status: %v", err), statusFor(err))
 		return
 	}
 	http.Redirect(w, r, "/goals/"+newGoal.ID, http.StatusSeeOther)
@@ -60,7 +60,7 @@ func (s *Server) handleGoalAttach(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := s.svc.AttachToGoal(r.Context(), entryID, goalID); err != nil {
-		http.Error(w, fmt.Sprintf("attach: %v", err), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("attach: %v", err), statusFor(err))
 		return
 	}
 	http.Redirect(w, r, "/goals/"+goalID, http.StatusSeeOther)
@@ -135,7 +135,7 @@ func (s *Server) handleEdgeDetach(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.svc.DetachFromGoal(r.Context(), edgeID); err != nil {
-		http.Error(w, fmt.Sprintf("detach: %v", err), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("detach: %v", err), statusFor(err))
 		return
 	}
 
