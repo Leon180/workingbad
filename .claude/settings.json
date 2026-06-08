@@ -67,7 +67,9 @@
       "Bash(gofmt -s -w cmd/workingbad/)",
       "Bash(rtk wc *)",
       "Bash(sed -i.bak 's/\\\\.Supersede\\(ctx\\(t\\), \\\\\\([^,]*\\\\\\), domain\\\\.Entry/.Supersede\\(ctx\\(t\\), \\\\1, 0, domain.Entry/g' internal/repository/queries_test.go internal/repository/service_test.go internal/repository/edges_test.go)",
-      "Bash(rm -f internal/repository/*.bak)"
+      "Bash(rm -f internal/repository/*.bak)",
+      "Bash(golangci-lint --version)",
+      "Bash(gofmt -w internal/domain/types.go internal/repository/pipeline.go cmd/workingbad/main_test.go)"
     ]
   }
 }

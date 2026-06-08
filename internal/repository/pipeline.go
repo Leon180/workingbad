@@ -566,10 +566,10 @@ func (s *Service) supersedeEntryInTxWithExpected(ctx context.Context, qtx *sqlcd
 
 // pickActivityOccurredAt returns the best signal we have for the synthesised
 // activity entry's event time, in order of trustworthiness:
-//   1. earliest joined raw_commits.author_time across the change set
-//   2. segments.occurred_at_min snapshot (UpsertSegment cached it)
-//   3. zero (caller decides whether to fall back to now and set
-//      QualityDegraded)
+//  1. earliest joined raw_commits.author_time across the change set
+//  2. segments.occurred_at_min snapshot (UpsertSegment cached it)
+//  3. zero (caller decides whether to fall back to now and set
+//     QualityDegraded)
 func pickActivityOccurredAt(earliestAuthor, segMin time.Time) time.Time {
 	if !earliestAuthor.IsZero() {
 		return earliestAuthor

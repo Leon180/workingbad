@@ -150,17 +150,17 @@ type Edge struct {
 // across the change set, recomputed at materialize time. Drives activity
 // OccurredAt assignment and goal-window queries.
 type Segment struct {
-	ID             string
-	RepoID         string
-	Source         Source
-	SourceRef      string // encode(repo_id, branch, anchor_patch_id)
-	SummaryState   SummaryState
-	AnchorPatchID  string
-	Metadata       string
-	OccurredAtMin  time.Time
-	OccurredAtMax  time.Time
-	IngestedAt     time.Time
-	UpdatedAt      time.Time
+	ID            string
+	RepoID        string
+	Source        Source
+	SourceRef     string // encode(repo_id, branch, anchor_patch_id)
+	SummaryState  SummaryState
+	AnchorPatchID string
+	Metadata      string
+	OccurredAtMin time.Time
+	OccurredAtMax time.Time
+	IngestedAt    time.Time
+	UpdatedAt     time.Time
 }
 
 // RawCommit is the self-contained git commit record. sha is idempotency key;

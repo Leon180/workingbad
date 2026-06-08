@@ -299,13 +299,13 @@ var _ = mock.New
 
 // TestCLI_Journey_TimeTravelReproducesPastState is the scripted dogfooding
 // journey for the bitemporal Slice A.5 work:
-//   1. engineer creates a goal via CLI at T0
-//   2. captures T0_snapshot
-//   3. supersedes the goal (status open → in_progress) at T1
-//   4. supersedes again (in_progress → done) at T2
-//   5. list --at T0_snapshot must reproduce the v1 goal (status=open)
-//   6. list --at now must show the v3 goal (status=done)
-//   7. history <logical-id> must enumerate 3 versions newest-first
+//  1. engineer creates a goal via CLI at T0
+//  2. captures T0_snapshot
+//  3. supersedes the goal (status open → in_progress) at T1
+//  4. supersedes again (in_progress → done) at T2
+//  5. list --at T0_snapshot must reproduce the v1 goal (status=open)
+//  6. list --at now must show the v3 goal (status=done)
+//  7. history <logical-id> must enumerate 3 versions newest-first
 //
 // This is the "git log" / "git show <hash>:<file>" equivalent for the
 // truth source — and the user-facing payoff of the bitemporal foundation.
