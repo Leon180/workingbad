@@ -292,6 +292,109 @@ func TestNewSubmit_RequiresTitle(t *testing.T) {
 	}
 }
 
+// TestGoalStatus_SupersedesAndRedirects — POST status change creates a new
+// goal version and redirects to the new id (so the URL bar reflects the
+// live row).
+func TestGoalStatus_SupersedesAndRedirects(t *testing.T) {
+	srv := newTestServer(t)
+	ctx := context.Background()
+	goal := seedGoal(t, srv, ctx, "Ship Slice B")
+
+	form := "status=in_progress"
+	req := httptest.NewRequest(http.MethodPost,
+		"http://127.0.0.1/goals/"+goal.ID+"/status", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status=%d, want 303 (body=%s)", rec.Code, rec.Body.String())
+	}
+	loc := rec.Header().Get("Location")
+	if !strings.HasPrefix(loc, "/goals/") || loc == "/goals/"+goal.ID {
+		t.Errorf("redirect should point at a new goal id, got %q", loc)
+	}
+
+	body := getBody(t, srv, loc)
+	if !strings.Contains(body, "in_progress") {
+		t.Error("new goal status not visible")
+	}
+}
+
+// TestGoalAttach_LinksEntryAndRedirects — only activity entries surface
+// on the goal detail page (GetGoalActivities filters to type='activity'),
+// so the test attaches one of those.
+func TestGoalAttach_LinksEntryAndRedirects(t *testing.T) {
+	srv := newTestServer(t)
+	ctx := context.Background()
+	goal := seedGoal(t, srv, ctx, "Goal")
+	activity := seedEntry(t, srv, ctx, domain.EntryTypeActivity, "Some activity")
+
+	form := "entry_id=" + activity.ID
+	req := httptest.NewRequest(http.MethodPost,
+		"http://127.0.0.1/goals/"+goal.ID+"/attach", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status=%d, want 303 (body=%s)", rec.Code, rec.Body.String())
+	}
+	body := getBody(t, srv, "/goals/"+goal.ID)
+	if !strings.Contains(body, "Some activity") {
+		t.Errorf("attached activity not visible: %q", body)
+	}
+}
+
+// TestEdgeDetach_RemovesEdgeFromGoalDetail
+func TestEdgeDetach_RemovesEdgeFromGoalDetail(t *testing.T) {
+	srv := newTestServer(t)
+	ctx := context.Background()
+	goal := seedGoal(t, srv, ctx, "Goal")
+	activity := seedEntry(t, srv, ctx, domain.EntryTypeActivity, "Wired")
+
+	edge, err := srv.svc.AttachToGoal(ctx, activity.ID, goal.ID)
+	if err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+
+	form := "goal_id=" + goal.ID
+	req := httptest.NewRequest(http.MethodPost,
+		"http://127.0.0.1/edges/"+edge.ID+"/detach", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status=%d, want 303 (body=%s)", rec.Code, rec.Body.String())
+	}
+
+	body := getBody(t, srv, "/goals/"+goal.ID)
+	if strings.Contains(body, "Wired") {
+		t.Errorf("detached activity should not appear: %q", body)
+	}
+	if !strings.Contains(body, "attached activities (0)") {
+		t.Error("count should be 0 after detach")
+	}
+}
+
+// TestGoalAttach_MissingEntryID_400
+func TestGoalAttach_MissingEntryID_400(t *testing.T) {
+	srv := newTestServer(t)
+	ctx := context.Background()
+	goal := seedGoal(t, srv, ctx, "G")
+
+	req := httptest.NewRequest(http.MethodPost,
+		"http://127.0.0.1/goals/"+goal.ID+"/attach", strings.NewReader(""))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for missing entry_id, got %d", rec.Code)
+	}
+}
+
 // TestIndex_EmptyState renders the friendly "no entries" copy + the CLI
 // hint without crashing on a zero-row list.
 func TestIndex_EmptyState(t *testing.T) {

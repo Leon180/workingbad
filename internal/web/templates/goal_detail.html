@@ -11,14 +11,32 @@
   <span>v{{$goal.Version}}</span>
 </div>
 
+<form method="post" action="/goals/{{$goal.ID}}/status" class="inline-form">
+  <label>set status
+    <select name="status">
+      {{range $s := .StatusOptions}}
+        <option value="{{$s}}"{{if eq $s $goal.Status}} selected{{end}}>{{$s}}</option>
+      {{end}}
+    </select>
+  </label>
+  <button type="submit">change</button>
+</form>
+
+<form method="post" action="/goals/{{$goal.ID}}/attach" class="inline-form">
+  <label>attach entry
+    <input type="text" name="entry_id" placeholder="entry-id (uuid)" required>
+  </label>
+  <button type="submit">attach</button>
+</form>
+
 {{if $goal.Body}}
 <section class="body">
   <pre>{{$goal.Body}}</pre>
 </section>
 {{end}}
 
-<h2>attached activities ({{len .Activities}})</h2>
-{{if .Activities}}
+<h2>attached activities ({{len .Attached}})</h2>
+{{if .Attached}}
 <table>
   <thead>
     <tr>
@@ -26,22 +44,32 @@
       <th>title</th>
       <th>v</th>
       <th>id</th>
+      <th></th>
     </tr>
   </thead>
   <tbody>
-    {{range .Activities}}
+    {{range .Attached}}
+    {{$a := .Activity}}
     <tr>
-      <td class="time">{{fmtTime .OccurredAt}}</td>
-      <td><a href="/entries/{{.ID}}">{{.Title}}</a></td>
-      <td>v{{.Version}}</td>
-      <td class="id">{{.ID}}</td>
+      <td class="time">{{fmtTime $a.OccurredAt}}</td>
+      <td><a href="/entries/{{$a.ID}}">{{$a.Title}}</a></td>
+      <td>v{{$a.Version}}</td>
+      <td class="id">{{$a.ID}}</td>
+      <td>
+        {{if .EdgeID}}
+        <form method="post" action="/edges/{{.EdgeID}}/detach" class="inline-form">
+          <input type="hidden" name="goal_id" value="{{$goal.ID}}">
+          <button type="submit" class="danger">detach</button>
+        </form>
+        {{end}}
+      </td>
     </tr>
     {{end}}
   </tbody>
 </table>
 {{else}}
-<p class="empty">No attached activities yet. Attach via CLI:</p>
-<pre>workingbad attach &lt;activity-id&gt; {{$goal.ID}}</pre>
+<p class="empty">No attached activities yet. Attach an entry id above or via CLI:</p>
+<pre>workingbad attach &lt;entry-id&gt; {{$goal.ID}}</pre>
 {{end}}
 
 <dl class="detail-kv">

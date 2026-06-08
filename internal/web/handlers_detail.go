@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/Leon180/workingbad/internal/domain"
 	"github.com/Leon180/workingbad/internal/repository"
@@ -80,11 +81,63 @@ func (s *Server) handleGoalDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Each attached activity comes with the edge id that links it, so the
+	// detail page can show a one-click detach button per row. The mock
+	// surface in GetGoalActivities returns entries only; we pair them here
+	// with the edges they sit on by querying edges live with from=activity
+	// to=any-version-of-goal.
+	attached, err := s.collectAttached(r.Context(), live, activities)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("repository: %v", err), http.StatusInternalServerError)
+		return
+	}
+
 	s.render(w, "goal_detail.html", goalDetailData{
-		Title:      "workingbad — " + live.Title,
-		Goal:       live,
-		Activities: activities,
+		Title:         "workingbad — " + live.Title,
+		Goal:          live,
+		Attached:      attached,
+		StatusOptions: goalStatusOptions,
 	})
+}
+
+// goalStatusOptions drives the status dropdown on the goal detail page.
+// Order matches typical workflow (open → in_progress → done; archived as
+// a terminal sink).
+var goalStatusOptions = []domain.Status{
+	domain.StatusOpen,
+	domain.StatusInProgress,
+	domain.StatusDone,
+	domain.StatusArchived,
+}
+
+// attachedActivity bundles an activity with the live edge id that links
+// it, so the template can render a per-row detach button.
+type attachedActivity struct {
+	Activity domain.Entry
+	EdgeID   string
+}
+
+// collectAttached pairs each activity returned by GetGoalActivities with
+// its live part_of edge id. Cheap because the edges-by-from query is
+// indexed and the activity set is bounded.
+func (s *Server) collectAttached(ctx context.Context, goal domain.Entry, activities []domain.Entry) ([]attachedActivity, error) {
+	out := make([]attachedActivity, 0, len(activities))
+	for _, a := range activities {
+		edges, err := s.svc.EdgesAt(ctx, time.Now().UTC(),
+			repository.EdgeFilter{Relation: domain.RelationPartOf, FromID: a.ID, ToID: goal.ID})
+		if err != nil {
+			return nil, err
+		}
+		edgeID := ""
+		for _, e := range edges {
+			if e.IsCurrent {
+				edgeID = e.ID
+				break
+			}
+		}
+		out = append(out, attachedActivity{Activity: a, EdgeID: edgeID})
+	}
+	return out, nil
 }
 
 type entryDetailData struct {
@@ -94,9 +147,10 @@ type entryDetailData struct {
 }
 
 type goalDetailData struct {
-	Title      string
-	Goal       domain.Entry
-	Activities []domain.Entry
+	Title         string
+	Goal          domain.Entry
+	Attached      []attachedActivity
+	StatusOptions []domain.Status
 }
 
 // errNotFound is the sentinel resolveLogical returns when neither lookup
