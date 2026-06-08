@@ -55,7 +55,7 @@ func (q *Queries) GetChangeIDBySHA(ctx context.Context, sha string) (string, err
 }
 
 const getRawChange = `-- name: GetRawChange :one
-SELECT change_id, repo_id, patch_id, created_at FROM raw_changes WHERE change_id = ?
+SELECT change_id, repo_id, patch_id, created_at, ingested_at FROM raw_changes WHERE change_id = ?
 `
 
 func (q *Queries) GetRawChange(ctx context.Context, changeID string) (RawChange, error) {
@@ -66,19 +66,22 @@ func (q *Queries) GetRawChange(ctx context.Context, changeID string) (RawChange,
 		&i.RepoID,
 		&i.PatchID,
 		&i.CreatedAt,
+		&i.IngestedAt,
 	)
 	return i, err
 }
 
 const insertRawChange = `-- name: InsertRawChange :exec
-INSERT INTO raw_changes (change_id, repo_id, patch_id, created_at) VALUES (?, ?, ?, ?)
+INSERT INTO raw_changes (change_id, repo_id, patch_id, ingested_at, created_at)
+VALUES (?, ?, ?, ?, ?)
 `
 
 type InsertRawChangeParams struct {
-	ChangeID  string
-	RepoID    string
-	PatchID   sql.NullString
-	CreatedAt string
+	ChangeID   string
+	RepoID     string
+	PatchID    sql.NullString
+	IngestedAt sql.NullString
+	CreatedAt  string
 }
 
 func (q *Queries) InsertRawChange(ctx context.Context, arg InsertRawChangeParams) error {
@@ -86,6 +89,7 @@ func (q *Queries) InsertRawChange(ctx context.Context, arg InsertRawChangeParams
 		arg.ChangeID,
 		arg.RepoID,
 		arg.PatchID,
+		arg.IngestedAt,
 		arg.CreatedAt,
 	)
 	return err
@@ -93,9 +97,10 @@ func (q *Queries) InsertRawChange(ctx context.Context, arg InsertRawChangeParams
 
 const insertRawCommit = `-- name: InsertRawCommit :exec
 INSERT INTO raw_commits
-    (sha, repo_id, change_id, parent_shas, author, author_time, committer, commit_time, message, diff, branch_hint, is_current, superseded_by, created_at)
+    (sha, repo_id, change_id, parent_shas, author, author_time, committer, commit_time,
+     message, diff, branch_hint, is_current, superseded_by, ingested_at, created_at)
 VALUES
-    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertRawCommitParams struct {
@@ -112,6 +117,7 @@ type InsertRawCommitParams struct {
 	BranchHint   sql.NullString
 	IsCurrent    int64
 	SupersededBy sql.NullString
+	IngestedAt   sql.NullString
 	CreatedAt    string
 }
 
@@ -130,6 +136,7 @@ func (q *Queries) InsertRawCommit(ctx context.Context, arg InsertRawCommitParams
 		arg.BranchHint,
 		arg.IsCurrent,
 		arg.SupersededBy,
+		arg.IngestedAt,
 		arg.CreatedAt,
 	)
 	return err

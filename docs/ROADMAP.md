@@ -25,7 +25,37 @@
 - [ ] CLI:`sync / list / note / decision / goal / attach / detach / status / summarize`
 - [ ] 完整測試(TDD,table-driven):不變量(immutable + supersede + per (segment,type)≤1 live)、冪等(raw sha / segments / sync_state hash skip / disjoint sets fixture / supersede 不雙貼)、pipeline 端到端(mock 全程)、re-Summarize 後 attach 不消失;**測試隔離=`t.TempDir()` 獨立檔 + 跑全 migration**
 
-**Slice B(Web,緊接 A,同 Phase 內)**
+**Slice A.5(Bitemporal / Time-travel Foundations,v0.1.0 凍結前必收)**
+
+完整 grill 記錄見 [docs/grill/2026-06-08-time-travel-schema.md](grill/2026-06-08-time-travel-schema.md)(3 輪 multi-agent:search prior art / architect 正向 / silent-failure-hunter 既有 code / architect 紅隊壓測 → 用戶拍板 (A))。
+
+**路線**:Query-Time Versioning(用既有 supersede chain)+ bitemporal 時間拆分(`occurred_at` 事件 / `ingested_at` 落地);純 additive migration(不改既有 0001~0007);API 欄位放 `domain.Entry`(不 variadic opts);`source_checkpoint` 保 UPSERT 加 success/failure 時間,`sync_state` 改 append-only;`segments` 加 `occurred_at_min/max` 實體欄位;不動 FTS5(不加 UNINDEXED occurred_at)。
+
+**Branch**:`feature/bitemporal-time-travel`,單一 feature branch,N commit 自包含可 bisect,squash 時機留 v0.1.0 tag 前評估。
+
+**19 commit 序**(細節見 grill doc §5):
+- [ ] (1) fix conv.go P0 silent corruption (formatRFC zero/parseRFC swallow)
+- [ ] (2-5) migrations 0008(add cols)/0009(backfill)/0010(drop created_at + indexes)/0011(sync_state append-only)
+- [ ] (6) domain.Entry/Edge 加 OccurredAt/IngestedAt/Actor/Reason/Version/SourceEventHash + 全 caller rename
+- [ ] (7) supersede 繼承 occurred_at / rePoint 邊保留原 occurred_at (修紅隊 P1)
+- [ ] (8) materializeOne 從 raw_commits.author_time 拉 occurred_at 灌入 activity entry
+- [ ] (9) Source.PullResult 加 OccurredAtCandidate[] + Primary
+- [ ] (10) validateEntry 走 candidates / >24h future 警告 / quality_degraded fallback
+- [ ] (11) segments occurred_at_min/max 於 UpsertSegment 算入
+- [ ] (12) source_checkpoint 加 last_success_at/last_failure_at/failure_reason (維持 UPSERT)
+- [ ] (13) sync_state append-only 流程 + 啟動 prune 30 天前 non-current
+- [ ] (14) Supersede expected_version 樂觀鎖(並發 supersede 防護)
+- [ ] (15) source_event_hash fetched 重複 fetch 冪等
+- [ ] (16) ListEntriesAt / EntryHistory / GoalActivitiesAt / EdgesAt + 測試
+- [ ] (17) CLI:`list --at` / `history`(diff 留 Slice B 後)
+- [ ] (18) integration test:time-travel journey + EXPLAIN QUERY PLAN golden(防 index 退化)
+- [ ] (19) 本決策寫成 `decision` Entry(dogfooding)
+
+**明確排除**(grill doc §7):FTS5 mirror occurred_at、snapshot table、Event Sourcing、Commit DAG、background prune、monotonic clock、deep chain compact、Web UI 雙時間呈現(留 Slice B)。
+
+- **Exit 標準**(grill doc §6):能在 CLI 復現任一時刻 entry/edge/goal 狀態;re-summarize 後 occurred_at 不漂移;supersede 並發測試後者拿 ErrVersionConflict;EXPLAIN QUERY PLAN golden 覆蓋 6 個查詢;本決策入庫為 decision Entry。
+
+**Slice B(Web,緊接 A.5,同 Phase 內)**
 - [ ] Web UI:列表全 5 type(WHERE is_current=1, **零 graph**) + 計數提示列(免 LLM COUNT) + 手動建/編輯表單 + goal 詳情扁平 `part_of` 列表(沿 iteration_of 聚合)
 - [ ] Web 安全(不可逆即設):**127.0.0.1 binding + Host allowlist middleware(防 DNS rebinding)+ GET/POST 動詞分離 + `http.CrossOriginProtection`**;CSRF token/local token auth 留 mutationGuard chain seam additive(single-user 假設下暫不上)
 - [ ] CLI / HTTP 共用同一 repository service;adapter 薄整合測

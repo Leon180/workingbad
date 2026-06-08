@@ -48,7 +48,11 @@ func (s *Service) AttachToGoal(ctx context.Context, activityID, goalID string) (
 		if cerr := tx.Commit(); cerr != nil {
 			return domain.Edge{}, cerr
 		}
-		return edgeFromSqlc(edge), nil
+		converted, cerr := edgeFromSqlc(edge)
+		if cerr != nil {
+			return domain.Edge{}, cerr
+		}
+		return converted, nil
 	case errors.Is(err, sql.ErrNoRows):
 		// fall through
 	default:
@@ -60,13 +64,19 @@ func (s *Service) AttachToGoal(ctx context.Context, activityID, goalID string) (
 		return domain.Edge{}, fmt.Errorf("repository: gen edge id: %w", err)
 	}
 	now := time.Now().UTC()
+	nowRFC, err := formatRFC(now)
+	if err != nil {
+		return domain.Edge{}, fmt.Errorf("repository: format now: %w", err)
+	}
 	if err := qtx.InsertEdge(ctx, sqlcdb.InsertEdgeParams{
-		ID:        id.String(),
-		FromID:    activityID,
-		ToID:      goalID,
-		Relation:  string(domain.RelationPartOf),
-		Metadata:  "{}",
-		CreatedAt: formatRFC(now),
+		ID:         id.String(),
+		FromID:     activityID,
+		ToID:       goalID,
+		Relation:   string(domain.RelationPartOf),
+		Metadata:   "{}",
+		OccurredAt: stringToNS(nowRFC),
+		IngestedAt: stringToNS(nowRFC),
+		CreatedAt:  nowRFC,
 	}); err != nil {
 		return domain.Edge{}, fmt.Errorf("repository: insert edge: %w", err)
 	}
@@ -75,13 +85,14 @@ func (s *Service) AttachToGoal(ctx context.Context, activityID, goalID string) (
 		return domain.Edge{}, err
 	}
 	return domain.Edge{
-		ID:        id.String(),
-		FromID:    activityID,
-		ToID:      goalID,
-		Relation:  domain.RelationPartOf,
-		IsCurrent: true,
-		Metadata:  "{}",
-		CreatedAt: now,
+		ID:         id.String(),
+		FromID:     activityID,
+		ToID:       goalID,
+		Relation:   domain.RelationPartOf,
+		IsCurrent:  true,
+		Metadata:   "{}",
+		OccurredAt: now,
+		IngestedAt: now,
 	}, nil
 }
 
@@ -123,7 +134,10 @@ func (s *Service) SetGoalStatus(ctx context.Context, goalID string, newStatus do
 	if err != nil {
 		return domain.Entry{}, err
 	}
-	current := entryFromSqlc(old)
+	current, err := entryFromSqlc(old)
+	if err != nil {
+		return domain.Entry{}, err
+	}
 	if current.Type != domain.EntryTypeGoal {
 		return domain.Entry{}, fmt.Errorf("repository: entry %q is not a goal (type=%s)", goalID, current.Type)
 	}
@@ -195,13 +209,24 @@ func rePointIncoming(ctx context.Context, qtx *sqlcdb.Queries, oldID, newID stri
 	if err != nil {
 		return fmt.Errorf("repository: load incoming edges: %w", err)
 	}
-	now := formatRFC(time.Now().UTC())
+	nowRFC, err := formatRFC(time.Now().UTC())
+	if err != nil {
+		return fmt.Errorf("repository: format now: %w", err)
+	}
 	for _, e := range incoming {
 		next, err := nextEdgeID()
 		if err != nil {
 			return err
 		}
-		if err := supersedeAndInsertEdge(ctx, qtx, e.ID, next, e.FromID, newID, e.Relation, e.Metadata, now); err != nil {
+		// Edge re-point under supersede inherits the original edge's
+		// occurred_at (red team #2 in grill doc). If we used now() instead,
+		// EdgesAt(historical-T) would see an edge that "didn't exist yet" at
+		// T because all re-pointed edges would carry the supersede-time.
+		occurredRFC := nsToString(e.OccurredAt)
+		if occurredRFC == "" {
+			occurredRFC = nowRFC
+		}
+		if err := supersedeAndInsertEdge(ctx, qtx, e.ID, next, e.FromID, newID, e.Relation, e.Metadata, occurredRFC, nowRFC); err != nil {
 			return err
 		}
 	}
@@ -213,13 +238,20 @@ func rePointOutgoing(ctx context.Context, qtx *sqlcdb.Queries, oldID, newID stri
 	if err != nil {
 		return fmt.Errorf("repository: load outgoing edges: %w", err)
 	}
-	now := formatRFC(time.Now().UTC())
+	nowRFC, err := formatRFC(time.Now().UTC())
+	if err != nil {
+		return fmt.Errorf("repository: format now: %w", err)
+	}
 	for _, e := range outgoing {
 		next, err := nextEdgeID()
 		if err != nil {
 			return err
 		}
-		if err := supersedeAndInsertEdge(ctx, qtx, e.ID, next, newID, e.ToID, e.Relation, e.Metadata, now); err != nil {
+		occurredRFC := nsToString(e.OccurredAt)
+		if occurredRFC == "" {
+			occurredRFC = nowRFC
+		}
+		if err := supersedeAndInsertEdge(ctx, qtx, e.ID, next, newID, e.ToID, e.Relation, e.Metadata, occurredRFC, nowRFC); err != nil {
 			return err
 		}
 	}
@@ -234,7 +266,13 @@ func nextEdgeID() (string, error) {
 	return id.String(), nil
 }
 
-func supersedeAndInsertEdge(ctx context.Context, qtx *sqlcdb.Queries, oldEdgeID, newEdgeID, fromID, toID, relation, metadata, createdAt string) error {
+// supersedeAndInsertEdge flips the live row to is_current=0 + superseded_by
+// = newEdgeID, then inserts the replacement carrying:
+//   - occurredAt: inherited from the old edge so historical EdgesAt(T)
+//     remains stable
+//   - ingestedAt: the supersede operation's wall-clock time (system time
+//     when we recorded this re-point)
+func supersedeAndInsertEdge(ctx context.Context, qtx *sqlcdb.Queries, oldEdgeID, newEdgeID, fromID, toID, relation, metadata, occurredAt, ingestedAt string) error {
 	if err := qtx.SupersedeEdge(ctx, sqlcdb.SupersedeEdgeParams{
 		SupersededBy: stringToNS(newEdgeID), ID: oldEdgeID,
 	}); err != nil {
@@ -244,12 +282,16 @@ func supersedeAndInsertEdge(ctx context.Context, qtx *sqlcdb.Queries, oldEdgeID,
 		metadata = "{}"
 	}
 	if err := qtx.InsertEdge(ctx, sqlcdb.InsertEdgeParams{
-		ID:        newEdgeID,
-		FromID:    fromID,
-		ToID:      toID,
-		Relation:  relation,
-		Metadata:  metadata,
-		CreatedAt: createdAt,
+		ID:         newEdgeID,
+		FromID:     fromID,
+		ToID:       toID,
+		Relation:   relation,
+		Metadata:   metadata,
+		OccurredAt: stringToNS(occurredAt),
+		IngestedAt: stringToNS(ingestedAt),
+		// Legacy created_at column maintained in lockstep until v0.1.0
+		// squash drops it.
+		CreatedAt: ingestedAt,
 	}); err != nil {
 		return fmt.Errorf("repository: insert repointed edge: %w", err)
 	}

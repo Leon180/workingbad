@@ -17,30 +17,114 @@ type Edge struct {
 	SupersededBy sql.NullString
 	Metadata     string
 	CreatedAt    string
+	OccurredAt   sql.NullString
+	IngestedAt   sql.NullString
+	Actor        sql.NullString
+	Reason       sql.NullString
+}
+
+type EntriesFt struct {
+	EntryID string
+	Title   string
+	Body    string
 }
 
 type Entry struct {
-	ID           string
-	LogicalID    string
-	Type         string
-	Title        string
-	Body         string
-	Source       string
-	SourceRef    sql.NullString
-	Origin       string
-	RepoID       sql.NullString
-	Author       sql.NullString
-	Status       sql.NullString
-	IsCurrent    int64
-	SupersededBy sql.NullString
-	Metadata     string
-	CreatedAt    string
-	UpdatedAt    string
+	ID              string
+	LogicalID       string
+	Type            string
+	Title           string
+	Body            string
+	Source          string
+	SourceRef       sql.NullString
+	Origin          string
+	RepoID          sql.NullString
+	Author          sql.NullString
+	Status          sql.NullString
+	IsCurrent       int64
+	SupersededBy    sql.NullString
+	Metadata        string
+	CreatedAt       string
+	UpdatedAt       string
+	OccurredAt      sql.NullString
+	IngestedAt      sql.NullString
+	Actor           sql.NullString
+	Reason          sql.NullString
+	SourceEventHash sql.NullString
+	Version         sql.NullInt64
+	QualityDegraded sql.NullInt64
 }
 
 type RawChange struct {
-	ChangeID  string
-	RepoID    string
-	PatchID   sql.NullString
-	CreatedAt string
+	ChangeID   string
+	RepoID     string
+	PatchID    sql.NullString
+	CreatedAt  string
+	IngestedAt sql.NullString
+}
+
+type RawCommit struct {
+	Sha          string
+	RepoID       string
+	ChangeID     string
+	ParentShas   string
+	Author       string
+	AuthorTime   string
+	Committer    string
+	CommitTime   string
+	Message      string
+	Diff         sql.NullString
+	BranchHint   sql.NullString
+	IsCurrent    int64
+	SupersededBy sql.NullString
+	CreatedAt    string
+	IngestedAt   sql.NullString
+}
+
+type Segment struct {
+	ID            string
+	RepoID        string
+	Source        string
+	SourceRef     string
+	SummaryState  string
+	AnchorPatchID sql.NullString
+	Metadata      string
+	CreatedAt     string
+	UpdatedAt     string
+	OccurredAtMin sql.NullString
+	OccurredAtMax sql.NullString
+	IngestedAt    sql.NullString
+}
+
+type SegmentRaw struct {
+	SegmentID  string
+	ChangeID   string
+	IngestedAt sql.NullString
+}
+
+type SourceCheckpoint struct {
+	RepoID        string
+	Source        string
+	Cursor        []byte
+	UpdatedAt     string
+	LastSuccessAt sql.NullString
+	LastFailureAt sql.NullString
+	FailureReason sql.NullString
+	IngestedAt    sql.NullString
+}
+
+type SyncState struct {
+	ID                string
+	Sink              string
+	SubjectKind       string
+	SubjectRef        string
+	ExternalRef       string
+	LastSyncedHash    string
+	LastSyncedEntryID sql.NullString
+	SyncedAt          string
+	OccurredAt        sql.NullString
+	IngestedAt        sql.NullString
+	LogicalID         sql.NullString
+	IsCurrent         sql.NullInt64
+	SupersededBy      sql.NullString
 }

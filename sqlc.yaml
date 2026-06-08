@@ -15,6 +15,9 @@ sql:
       - internal/migrations/0004_raw.sql
       - internal/migrations/0005_sync_state.sql
       - internal/migrations/0006_source_checkpoint.sql
+      - internal/migrations/0008_bitemporal_columns.sql
+      - internal/migrations/0010_bitemporal_indexes.sql
+      - internal/migrations/0011_sync_state_append_only.sql
       - internal/repository/queries/fts_schema_shim.sql
     gen:
       go:
@@ -26,4 +29,4 @@ sql:
         emit_empty_slices: true
         emit_prepared_queries: false
         emit_pointers_for_null_types: false
-        omit_unused_structs: true
+        omit_unused_structs: false

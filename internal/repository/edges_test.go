@@ -66,7 +66,7 @@ func TestAttachToGoal_RejectsSuperseded(t *testing.T) {
 	s := newService(t)
 	goal, activity := setupGoalAndActivity(t, s)
 	// Supersede the activity, then attempt attach using the old id.
-	if _, err := s.Supersede(ctx(t), activity.ID, domain.Entry{
+	if _, err := s.Supersede(ctx(t), activity.ID, 0, domain.Entry{
 		Type: domain.EntryTypeResearch, Origin: domain.OriginLocal,
 		Source: domain.SourceManual, SourceRef: "h2", Title: "v2",
 	}); err != nil {
@@ -248,5 +248,9 @@ func setupGoalAndActivity(t *testing.T, s *Service) (domain.Entry, domain.Entry)
 	if err != nil {
 		t.Fatalf("load activity: %v", err)
 	}
-	return goal, entryFromSqlc(row)
+	activity, err := entryFromSqlc(row)
+	if err != nil {
+		t.Fatalf("convert activity: %v", err)
+	}
+	return goal, activity
 }

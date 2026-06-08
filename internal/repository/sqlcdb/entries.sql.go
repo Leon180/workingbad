@@ -28,9 +28,7 @@ func (q *Queries) FlipEntrySuperseded(ctx context.Context, arg FlipEntrySupersed
 }
 
 const getEntryByID = `-- name: GetEntryByID :one
-SELECT id, logical_id, type, title, body, source, source_ref, origin, repo_id, author, status, is_current, superseded_by, metadata, created_at, updated_at
-  FROM entries
- WHERE id = ?
+SELECT id, logical_id, type, title, body, source, source_ref, origin, repo_id, author, status, is_current, superseded_by, metadata, created_at, updated_at, occurred_at, ingested_at, actor, reason, source_event_hash, version, quality_degraded FROM entries WHERE id = ?
 `
 
 func (q *Queries) GetEntryByID(ctx context.Context, id string) (Entry, error) {
@@ -53,8 +51,37 @@ func (q *Queries) GetEntryByID(ctx context.Context, id string) (Entry, error) {
 		&i.Metadata,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OccurredAt,
+		&i.IngestedAt,
+		&i.Actor,
+		&i.Reason,
+		&i.SourceEventHash,
+		&i.Version,
+		&i.QualityDegraded,
 	)
 	return i, err
+}
+
+const getEntryByLogicalIDAndHash = `-- name: GetEntryByLogicalIDAndHash :one
+SELECT id FROM entries
+ WHERE logical_id = ?
+   AND source_event_hash = ?
+   AND is_current = 1
+ LIMIT 1
+`
+
+type GetEntryByLogicalIDAndHashParams struct {
+	LogicalID       string
+	SourceEventHash sql.NullString
+}
+
+// Idempotency lookup: if a fetched event with this (logical_id, hash) is
+// already current, the caller should noop. Returns the live entry id.
+func (q *Queries) GetEntryByLogicalIDAndHash(ctx context.Context, arg GetEntryByLogicalIDAndHashParams) (string, error) {
+	row := q.db.QueryRowContext(ctx, getEntryByLogicalIDAndHash, arg.LogicalID, arg.SourceEventHash)
+	var id string
+	err := row.Scan(&id)
+	return id, err
 }
 
 const getEntryTypeAndCurrent = `-- name: GetEntryTypeAndCurrent :one
@@ -88,28 +115,37 @@ func (q *Queries) GetLiveActivityForSegment(ctx context.Context, sourceRef sql.N
 
 const insertEntryRow = `-- name: InsertEntryRow :exec
 INSERT INTO entries
-    (id, logical_id, type, title, body, source, source_ref, origin, repo_id, author, status, is_current, superseded_by, metadata, created_at, updated_at)
+    (id, logical_id, type, title, body, source, source_ref, source_event_hash, origin,
+     repo_id, author, actor, reason, status, is_current, superseded_by, metadata,
+     version, quality_degraded, occurred_at, ingested_at, created_at, updated_at)
 VALUES
-    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertEntryRowParams struct {
-	ID           string
-	LogicalID    string
-	Type         string
-	Title        string
-	Body         string
-	Source       string
-	SourceRef    sql.NullString
-	Origin       string
-	RepoID       sql.NullString
-	Author       sql.NullString
-	Status       sql.NullString
-	IsCurrent    int64
-	SupersededBy sql.NullString
-	Metadata     string
-	CreatedAt    string
-	UpdatedAt    string
+	ID              string
+	LogicalID       string
+	Type            string
+	Title           string
+	Body            string
+	Source          string
+	SourceRef       sql.NullString
+	SourceEventHash sql.NullString
+	Origin          string
+	RepoID          sql.NullString
+	Author          sql.NullString
+	Actor           sql.NullString
+	Reason          sql.NullString
+	Status          sql.NullString
+	IsCurrent       int64
+	SupersededBy    sql.NullString
+	Metadata        string
+	Version         sql.NullInt64
+	QualityDegraded sql.NullInt64
+	OccurredAt      sql.NullString
+	IngestedAt      sql.NullString
+	CreatedAt       string
+	UpdatedAt       string
 }
 
 func (q *Queries) InsertEntryRow(ctx context.Context, arg InsertEntryRowParams) error {
@@ -121,13 +157,20 @@ func (q *Queries) InsertEntryRow(ctx context.Context, arg InsertEntryRowParams) 
 		arg.Body,
 		arg.Source,
 		arg.SourceRef,
+		arg.SourceEventHash,
 		arg.Origin,
 		arg.RepoID,
 		arg.Author,
+		arg.Actor,
+		arg.Reason,
 		arg.Status,
 		arg.IsCurrent,
 		arg.SupersededBy,
 		arg.Metadata,
+		arg.Version,
+		arg.QualityDegraded,
+		arg.OccurredAt,
+		arg.IngestedAt,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)

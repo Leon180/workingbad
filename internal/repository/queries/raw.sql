@@ -5,16 +5,18 @@ SELECT change_id FROM raw_commits WHERE sha = ?;
 SELECT change_id FROM raw_changes WHERE repo_id = ? AND patch_id = ?;
 
 -- name: GetRawChange :one
-SELECT change_id, repo_id, patch_id, created_at FROM raw_changes WHERE change_id = ?;
+SELECT * FROM raw_changes WHERE change_id = ?;
 
 -- name: InsertRawChange :exec
-INSERT INTO raw_changes (change_id, repo_id, patch_id, created_at) VALUES (?, ?, ?, ?);
+INSERT INTO raw_changes (change_id, repo_id, patch_id, ingested_at, created_at)
+VALUES (?, ?, ?, ?, ?);
 
 -- name: InsertRawCommit :exec
 INSERT INTO raw_commits
-    (sha, repo_id, change_id, parent_shas, author, author_time, committer, commit_time, message, diff, branch_hint, is_current, superseded_by, created_at)
+    (sha, repo_id, change_id, parent_shas, author, author_time, committer, commit_time,
+     message, diff, branch_hint, is_current, superseded_by, ingested_at, created_at)
 VALUES
-    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: FlipPriorSHAOnChange :exec
 UPDATE raw_commits

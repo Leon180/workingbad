@@ -1,13 +1,13 @@
 -- name: InsertEntryRow :exec
 INSERT INTO entries
-    (id, logical_id, type, title, body, source, source_ref, origin, repo_id, author, status, is_current, superseded_by, metadata, created_at, updated_at)
+    (id, logical_id, type, title, body, source, source_ref, source_event_hash, origin,
+     repo_id, author, actor, reason, status, is_current, superseded_by, metadata,
+     version, quality_degraded, occurred_at, ingested_at, created_at, updated_at)
 VALUES
-    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetEntryByID :one
-SELECT id, logical_id, type, title, body, source, source_ref, origin, repo_id, author, status, is_current, superseded_by, metadata, created_at, updated_at
-  FROM entries
- WHERE id = ?;
+SELECT * FROM entries WHERE id = ?;
 
 -- name: GetEntryTypeAndCurrent :one
 SELECT type, is_current FROM entries WHERE id = ?;
@@ -21,3 +21,12 @@ SELECT id FROM entries
 UPDATE entries
    SET is_current = 0, superseded_by = ?, updated_at = ?
  WHERE id = ?;
+
+-- name: GetEntryByLogicalIDAndHash :one
+-- Idempotency lookup: if a fetched event with this (logical_id, hash) is
+-- already current, the caller should noop. Returns the live entry id.
+SELECT id FROM entries
+ WHERE logical_id = ?
+   AND source_event_hash = ?
+   AND is_current = 1
+ LIMIT 1;

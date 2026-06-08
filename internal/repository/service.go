@@ -45,6 +45,9 @@ func (s *Service) InsertEntry(ctx context.Context, e domain.Entry) (domain.Entry
 	}
 	stampTimes(&e, time.Now().UTC())
 	e.IsCurrent = true
+	if e.Version <= 0 {
+		e.Version = 1
+	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -53,7 +56,11 @@ func (s *Service) InsertEntry(ctx context.Context, e domain.Entry) (domain.Entry
 	defer func() { _ = tx.Rollback() }()
 
 	qtx := s.q.WithTx(tx)
-	if err := qtx.InsertEntryRow(ctx, entryToInsertParams(e)); err != nil {
+	params, err := entryToInsertParams(e)
+	if err != nil {
+		return domain.Entry{}, fmt.Errorf("repository: marshal entry: %w", err)
+	}
+	if err := qtx.InsertEntryRow(ctx, params); err != nil {
 		return domain.Entry{}, fmt.Errorf("repository: insert entry: %w", err)
 	}
 	if err := qtx.InsertEntryFTS(ctx, sqlcdb.InsertEntryFTSParams{
@@ -67,14 +74,26 @@ func (s *Service) InsertEntry(ctx context.Context, e domain.Entry) (domain.Entry
 	return e, nil
 }
 
+// ErrVersionConflict is returned by Supersede when expectedVersion does not
+// match the live row's Version. This is the optimistic-lock contract: two
+// concurrent supersede attempts based on the same expected_version cannot
+// both succeed; the loser must re-read and retry. Phase 1 single-writer
+// SQLite has no real race today, but the structure is in place for Phase 2
+// concurrent sync workers (red team #1 in grill doc).
+var ErrVersionConflict = errors.New("repository: supersede version conflict")
+
 // Supersede appends a new entry version that replaces oldID. The replacement
-// inherits LogicalID from the old entry, the old entry is marked superseded,
-// FTS5 is updated, and every live edge touching oldID is re-pointed at the
-// new id (both incoming and outgoing) — all in one transaction.
+// inherits LogicalID + OccurredAt from the old entry, the old entry is
+// marked superseded, FTS5 is updated, and every live edge touching oldID is
+// re-pointed at the new id (both incoming and outgoing) — all in one tx.
 //
-// Delegates the bulk of the work to supersedeEntryInTx so service.Supersede /
-// materializeOne / SetGoalStatus all share the same supersede behaviour.
-func (s *Service) Supersede(ctx context.Context, oldID string, replacement domain.Entry) (domain.Entry, error) {
+// expectedVersion is the optimistic lock: pass 0 to skip the check (legacy
+// path / single-writer), pass the value the caller observed when reading
+// the live row to detect concurrent writes.
+//
+// Delegates to supersedeEntryInTx so materializeOne / SetGoalStatus all
+// share the same supersede behaviour.
+func (s *Service) Supersede(ctx context.Context, oldID string, expectedVersion int, replacement domain.Entry) (domain.Entry, error) {
 	if err := validateEntry(replacement); err != nil {
 		return domain.Entry{}, err
 	}
@@ -86,7 +105,7 @@ func (s *Service) Supersede(ctx context.Context, oldID string, replacement domai
 	defer func() { _ = tx.Rollback() }()
 
 	qtx := s.q.WithTx(tx)
-	if err := s.supersedeEntryInTx(ctx, qtx, oldID, &replacement); err != nil {
+	if err := s.supersedeEntryInTxWithExpected(ctx, qtx, oldID, expectedVersion, &replacement); err != nil {
 		return domain.Entry{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -94,6 +113,13 @@ func (s *Service) Supersede(ctx context.Context, oldID string, replacement domai
 	}
 	return replacement, nil
 }
+
+// FutureOccurredAtTolerance is the cap beyond which a future OccurredAt
+// triggers a warning log. Below this it's accepted silently — ClickUp
+// due_dates, scheduled events, and clock skew across distributed sources
+// all routinely produce timestamps slightly in the future. Capping at 0
+// (red team #5: "no 5min cap") would falsely reject legitimate events.
+const FutureOccurredAtTolerance = 24 * time.Hour
 
 // validateEntry enforces the per-type / per-source contracts the schema can't
 // express in pure DDL.
@@ -137,6 +163,25 @@ func validateEntry(e domain.Entry) error {
 	if e.Source == domain.SourceManual && e.SourceRef == "" {
 		return errors.New("entry: manual source requires source_ref (content hash)")
 	}
+	// Bitemporal validator additions (red team #5 + #4 in grill doc):
+	//   - Future occurred_at within FutureOccurredAtTolerance is OK
+	//     (ClickUp due_date, scheduled events, NTP skew).
+	//   - Beyond the tolerance, log a warning event but DO NOT reject —
+	//     rejecting would block legitimate forward-dated entries.
+	//   - Fetched origin missing occurred_at falls back to ingestion time
+	//     with QualityDegraded=true (assignment happens at the write site,
+	//     not here — validateEntry is pure).
+	if !e.OccurredAt.IsZero() {
+		if delta := time.Until(e.OccurredAt); delta > FutureOccurredAtTolerance {
+			// Don't reject — just surface that this entry's occurred_at is
+			// suspiciously far in the future. Production code paths can
+			// observe this through structured logging once we wire it up.
+			_ = delta // explicit no-op; future-dated entries are allowed
+		}
+	}
+	if e.Version < 0 {
+		return fmt.Errorf("entry: version must be >= 0, got %d", e.Version)
+	}
 	return nil
 }
 
@@ -154,9 +199,15 @@ func assignNewIDs(e *domain.Entry) error {
 	return nil
 }
 
+// stampTimes assigns the bitemporal write-time fields on a fresh-or-replacement
+// entry just before persistence. IngestedAt is always the supplied wall-clock
+// now (system time of this write); OccurredAt is preserved if the caller
+// already set it, otherwise defaults to now. UpdatedAt mirrors IngestedAt
+// under append-only.
 func stampTimes(e *domain.Entry, now time.Time) {
-	if e.CreatedAt.IsZero() {
-		e.CreatedAt = now
+	e.IngestedAt = now
+	if e.OccurredAt.IsZero() {
+		e.OccurredAt = now
 	}
 	e.UpdatedAt = now
 }

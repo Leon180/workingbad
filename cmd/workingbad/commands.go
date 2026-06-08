@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"text/tabwriter"
+	"time"
 
 	"github.com/urfave/cli/v3"
 
@@ -46,13 +47,20 @@ func allCommands() []*cli.Command {
 		},
 		{
 			Name:  "list",
-			Usage: "list live entries newest first",
+			Usage: "list entries (live by default; --at for time-travel)",
 			Flags: []cli.Flag{
 				&cli.StringFlag{Name: "type", Usage: "filter by entry type (activity|research|discuss|decision|goal)"},
 				&cli.StringFlag{Name: "repo", Usage: "filter by repo_id"},
 				&cli.IntFlag{Name: "limit", Value: 20, Usage: "max rows to print"},
+				&cli.StringFlag{Name: "at", Usage: "time-travel: list state at RFC3339 timestamp (e.g. 2026-06-08T14:00:00Z)"},
 			},
 			Action: actionList,
+		},
+		{
+			Name:      "history",
+			Usage:     "show full supersede chain of a logical entry",
+			ArgsUsage: "<logical-id>",
+			Action:    actionHistory,
 		},
 		{
 			Name:      "attach",
@@ -240,6 +248,22 @@ func actionList(ctx context.Context, c *cli.Command) error {
 			RepoID: c.String("repo"),
 			Limit:  int(c.Int("limit")),
 		}
+		// Time-travel branch: --at <RFC3339> dispatches to ListEntriesAt
+		// so engineers can ask "what was alive on 6/8 14:00?". Without
+		// --at we keep the original "live now" behaviour.
+		if atStr := c.String("at"); atStr != "" {
+			asOf, err := parseAt(atStr)
+			if err != nil {
+				return fmt.Errorf("invalid --at: %w", err)
+			}
+			entries, err := svc.ListEntriesAt(ctx, asOf, filter)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("# state at %s\n", asOf.Format(time.RFC3339))
+			printEntries(os.Stdout, entries)
+			return nil
+		}
 		entries, err := svc.ListEntries(ctx, filter)
 		if err != nil {
 			return err
@@ -247,6 +271,57 @@ func actionList(ctx context.Context, c *cli.Command) error {
 		printEntries(os.Stdout, entries)
 		return nil
 	})
+}
+
+// actionHistory walks the supersede chain for a logical_id and prints each
+// version with its occurred_at + ingested_at side by side. The bitemporal
+// payoff: engineers can see "decision changed at T1, then again at T2,
+// occurring originally on T0".
+func actionHistory(ctx context.Context, c *cli.Command) error {
+	args := c.Args().Slice()
+	if len(args) < 1 {
+		return errors.New("usage: workingbad history <logical-id>")
+	}
+	return withService(c, func(ctx context.Context, svc *repository.Service) error {
+		history, err := svc.EntryHistory(ctx, args[0])
+		if err != nil {
+			return err
+		}
+		if len(history) == 0 {
+			fmt.Println("(no history — unknown logical_id)")
+			return nil
+		}
+		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		_, _ = fmt.Fprintln(tw, "VERSION\tID\tOCCURRED_AT\tINGESTED_AT\tTITLE")
+		for _, e := range history {
+			marker := ""
+			if e.IsCurrent {
+				marker = " (current)"
+			}
+			_, _ = fmt.Fprintf(tw, "v%d\t%s\t%s\t%s\t%s%s\n",
+				e.Version, e.ID,
+				e.OccurredAt.Format(time.RFC3339),
+				e.IngestedAt.Format(time.RFC3339),
+				e.Title, marker)
+		}
+		_ = tw.Flush()
+		return nil
+	})
+}
+
+// parseAt accepts either a full RFC3339 timestamp or a date-only string
+// (interpreted as midnight UTC). Relative parsing ("1h ago", "yesterday")
+// is intentionally not supported — a tiny scope creep that would only
+// confuse the user when timezones get involved. Engineers can compute the
+// timestamp themselves.
+func parseAt(s string) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t.UTC(), nil
+	}
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		return t.UTC(), nil
+	}
+	return time.Time{}, fmt.Errorf("must be RFC3339 (2026-06-08T14:00:00Z) or date (2026-06-08): %q", s)
 }
 
 func actionPending(ctx context.Context, c *cli.Command) error {
