@@ -2,6 +2,15 @@
 {{define "content"}}
 <h1>entries</h1>
 
+{{if .AtParseErr}}
+<div class="banner error">at parse error: {{.AtParseErr}} — showing live entries</div>
+{{else if not .AsOf.IsZero}}
+<div class="banner timetravel">
+  ⏳ viewing state at <strong>{{fmtTime .AsOf}}</strong>
+  <a href="/{{if .ActiveType}}?type={{.ActiveType}}{{end}}" class="reset">back to live</a>
+</div>
+{{end}}
+
 <form method="get" action="/" class="filter-bar">
   <label>
     type
@@ -17,8 +26,12 @@
     limit
     <input type="number" name="limit" min="1" max="1000" value="{{.ActiveLimit}}" style="width: 5rem">
   </label>
+  <label>
+    as of (RFC3339 or YYYY-MM-DD)
+    <input type="text" name="at" value="{{.ActiveAt}}" placeholder="now" style="width: 14rem">
+  </label>
   <button type="submit">apply</button>
-  {{if or .ActiveType (ne .ActiveLimit 50)}}
+  {{if or .ActiveType (ne .ActiveLimit 50) .ActiveAt}}
     <a href="/" class="reset">reset</a>
   {{end}}
 </form>

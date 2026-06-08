@@ -54,7 +54,14 @@ table tbody tr:nth-child(even) { background: var(--row-alt); }
   border: 1px solid #d4c97a;
   margin-bottom: 1rem;
   border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
 }
+.banner.timetravel { background: #e8f0ff; border-color: #99b8e8; }
+.banner.error { background: #ffe8e8; border-color: #d88; color: #800; }
+.banner .reset { margin-left: auto; color: var(--accent); text-decoration: none; }
+.banner .reset:hover { text-decoration: underline; }
 
 .filter-bar {
   display: flex;

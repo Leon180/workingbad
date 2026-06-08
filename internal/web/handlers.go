@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/Leon180/workingbad/internal/domain"
 	"github.com/Leon180/workingbad/internal/repository"
@@ -26,11 +27,11 @@ var allEntryTypes = []domain.EntryType{
 // land directly on what they care about, no separate dashboard. Filters
 // live in the query string so URLs are sharable and back-button works:
 //
-//	GET /              — all entries, default limit
-//	GET /?type=goal    — only goals
+//	GET /                           — live entries, default limit
+//	GET /?type=goal                 — only goals
 //	GET /?type=activity&limit=200
-//
-// (Time-travel `?at=` lands in the next commit.)
+//	GET /?at=2026-06-08T14:00:00Z   — time-travel: state as of that moment
+//	GET /?at=2026-06-08             — date alone = midnight UTC
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	filter := repository.ListFilter{
 		Type:  domain.EntryType(r.URL.Query().Get("type")),
@@ -41,7 +42,19 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		// noisy and the list itself shows what was actually filtered.
 	}
 
-	entries, err := s.svc.ListEntries(r.Context(), filter)
+	atStr := r.URL.Query().Get("at")
+	asOf, asOfErr := parseAtParam(atStr)
+
+	var (
+		entries []domain.Entry
+		err     error
+	)
+	switch {
+	case atStr != "" && asOfErr == nil:
+		entries, err = s.svc.ListEntriesAt(r.Context(), asOf, filter)
+	default:
+		entries, err = s.svc.ListEntries(r.Context(), filter)
+	}
 	if err != nil {
 		http.Error(w, fmt.Sprintf("repository: %v", err), http.StatusInternalServerError)
 		return
@@ -53,6 +66,9 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		Types:       allEntryTypes,
 		ActiveType:  filter.Type,
 		ActiveLimit: filter.Limit,
+		ActiveAt:    atStr,
+		AsOf:        asOf,
+		AtParseErr:  asOfErrString(atStr, asOfErr),
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.ExecuteTemplate(w, "index.html", data); err != nil {
@@ -66,6 +82,35 @@ type listData struct {
 	Types       []domain.EntryType
 	ActiveType  domain.EntryType
 	ActiveLimit int
+	ActiveAt    string    // raw query value, echoed into the form input
+	AsOf        time.Time // parsed (zero when ActiveAt is "" or unparseable)
+	AtParseErr  string    // human-readable; empty when ActiveAt is blank or parsed OK
+}
+
+// parseAtParam accepts the same shapes as the CLI's --at flag:
+//   - RFC3339 timestamp (2026-06-08T14:00:00Z)
+//   - date-only (2026-06-08, interpreted as midnight UTC)
+//
+// Empty string returns zero time with no error — callers branch on the
+// zero check to decide between live and at-time queries.
+func parseAtParam(s string) (time.Time, error) {
+	if s == "" {
+		return time.Time{}, nil
+	}
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t.UTC(), nil
+	}
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		return t.UTC(), nil
+	}
+	return time.Time{}, fmt.Errorf("invalid timestamp %q (expected RFC3339 or YYYY-MM-DD)", s)
+}
+
+func asOfErrString(raw string, err error) string {
+	if raw == "" || err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func parseLimit(s string) int {

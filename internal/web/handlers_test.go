@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Leon180/workingbad/internal/domain"
 )
@@ -68,6 +69,52 @@ func TestIndex_TypeFilter_IgnoresBogus(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "ship-it") {
 		t.Error("bogus type filter should fall through to all-entries")
+	}
+}
+
+// TestIndex_TimeTravelShowsHistoricalVersion proves the bitemporal payoff
+// at the Web UI layer: create entry v1, supersede it to v2, list with
+// ?at=<between> must show v1's title and a banner indicating snapshot mode.
+func TestIndex_TimeTravelShowsHistoricalVersion(t *testing.T) {
+	srv := newTestServer(t)
+	ctx := context.Background()
+
+	v1 := seedEntry(t, srv, ctx, domain.EntryTypeResearch, "Initial finding")
+	between := v1.IngestedAt.Add(10 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
+	if _, err := srv.svc.Supersede(ctx, v1.ID, v1.Version, domain.Entry{
+		Type: domain.EntryTypeResearch, Origin: domain.OriginLocal,
+		Source: domain.SourceManual, SourceRef: "tt-2",
+		Title: "Revised finding",
+	}); err != nil {
+		t.Fatalf("Supersede: %v", err)
+	}
+
+	body := getBody(t, srv, "/?at="+between.Format(time.RFC3339Nano))
+	if !strings.Contains(body, "Initial finding") {
+		t.Errorf("at-time view should show v1 title — body=%q", body)
+	}
+	if strings.Contains(body, "Revised finding") {
+		t.Errorf("at-time view should NOT show v2 (it didn't exist yet)")
+	}
+	if !strings.Contains(body, "viewing state at") {
+		t.Error("time-travel banner missing")
+	}
+}
+
+// TestIndex_AtParseError surfaces a friendly banner and falls back to
+// live entries instead of 500ing.
+func TestIndex_AtParseError(t *testing.T) {
+	srv := newTestServer(t)
+	ctx := context.Background()
+	seedEntry(t, srv, ctx, domain.EntryTypeResearch, "live-row")
+
+	body := getBody(t, srv, "/?at=banana")
+	if !strings.Contains(body, "at parse error") {
+		t.Error("expected parse error banner")
+	}
+	if !strings.Contains(body, "live-row") {
+		t.Error("expected fallback to live entries")
 	}
 }
 
