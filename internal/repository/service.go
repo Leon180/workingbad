@@ -158,9 +158,15 @@ func assignNewIDs(e *domain.Entry) error {
 	return nil
 }
 
+// stampTimes assigns the bitemporal write-time fields on a fresh-or-replacement
+// entry just before persistence. IngestedAt is always the supplied wall-clock
+// now (system time of this write); OccurredAt is preserved if the caller
+// already set it, otherwise defaults to now. UpdatedAt mirrors IngestedAt
+// under append-only.
 func stampTimes(e *domain.Entry, now time.Time) {
-	if e.CreatedAt.IsZero() {
-		e.CreatedAt = now
+	e.IngestedAt = now
+	if e.OccurredAt.IsZero() {
+		e.OccurredAt = now
 	}
 	e.UpdatedAt = now
 }

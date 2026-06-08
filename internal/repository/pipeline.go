@@ -105,16 +105,17 @@ func (s *Service) UpsertRaw(ctx context.Context, rc domain.RawCommit, patchID st
 			return domain.RawChange{}, fmt.Errorf("repository: gen change_id: %w", err)
 		}
 		change.ChangeID = id.String()
-		change.CreatedAt = time.Now().UTC()
-		createdRFC, ferr := formatRFC(change.CreatedAt)
+		change.IngestedAt = time.Now().UTC()
+		ingestedRFC, ferr := formatRFC(change.IngestedAt)
 		if ferr != nil {
-			return domain.RawChange{}, fmt.Errorf("repository: format change created_at: %w", ferr)
+			return domain.RawChange{}, fmt.Errorf("repository: format change ingested_at: %w", ferr)
 		}
 		if err := qtx.InsertRawChange(ctx, sqlcdb.InsertRawChangeParams{
-			ChangeID:  change.ChangeID,
-			RepoID:    change.RepoID,
-			PatchID:   stringToNS(change.PatchID),
-			CreatedAt: createdRFC,
+			ChangeID:   change.ChangeID,
+			RepoID:     change.RepoID,
+			PatchID:    stringToNS(change.PatchID),
+			IngestedAt: stringToNS(ingestedRFC),
+			CreatedAt:  ingestedRFC,
 		}); err != nil {
 			return domain.RawChange{}, fmt.Errorf("repository: insert raw_change: %w", err)
 		}
@@ -131,8 +132,8 @@ func (s *Service) UpsertRaw(ctx context.Context, rc domain.RawCommit, patchID st
 	}
 
 	// 3) Insert raw_commits.
-	if rc.CreatedAt.IsZero() {
-		rc.CreatedAt = time.Now().UTC()
+	if rc.IngestedAt.IsZero() {
+		rc.IngestedAt = time.Now().UTC()
 	}
 	parents := "[]"
 	if len(rc.ParentSHAs) > 0 {
@@ -150,9 +151,9 @@ func (s *Service) UpsertRaw(ctx context.Context, rc domain.RawCommit, patchID st
 	if err != nil {
 		return domain.RawChange{}, fmt.Errorf("repository: format commit_time: %w", err)
 	}
-	rcCreatedRFC, err := formatRFC(rc.CreatedAt)
+	rcIngestedRFC, err := formatRFC(rc.IngestedAt)
 	if err != nil {
-		return domain.RawChange{}, fmt.Errorf("repository: format raw_commit created_at: %w", err)
+		return domain.RawChange{}, fmt.Errorf("repository: format raw_commit ingested_at: %w", err)
 	}
 	if err := qtx.InsertRawCommit(ctx, sqlcdb.InsertRawCommitParams{
 		Sha:          rc.SHA,
@@ -168,7 +169,8 @@ func (s *Service) UpsertRaw(ctx context.Context, rc domain.RawCommit, patchID st
 		BranchHint:   stringToNS(rc.BranchHint),
 		IsCurrent:    1,
 		SupersededBy: stringToNS(rc.SupersededBy),
-		CreatedAt:    rcCreatedRFC,
+		IngestedAt:   stringToNS(rcIngestedRFC),
+		CreatedAt:    rcIngestedRFC,
 	}); err != nil {
 		return domain.RawChange{}, fmt.Errorf("repository: insert raw_commit: %w", err)
 	}
@@ -212,20 +214,22 @@ func (s *Service) UpsertSegment(ctx context.Context, seg domain.Segment) (domain
 			}
 			seg.ID = id.String()
 		}
-		if seg.CreatedAt.IsZero() {
-			seg.CreatedAt = now
+		if seg.IngestedAt.IsZero() {
+			seg.IngestedAt = now
 		}
 		if seg.Metadata == "" {
 			seg.Metadata = "{}"
 		}
-		createdRFC, ferr := formatRFC(seg.CreatedAt)
+		ingestedRFC, ferr := formatRFC(seg.IngestedAt)
 		if ferr != nil {
-			return domain.Segment{}, fmt.Errorf("repository: format segment created_at: %w", ferr)
+			return domain.Segment{}, fmt.Errorf("repository: format segment ingested_at: %w", ferr)
 		}
 		updatedRFC, ferr := formatRFC(seg.UpdatedAt)
 		if ferr != nil {
 			return domain.Segment{}, fmt.Errorf("repository: format segment updated_at: %w", ferr)
 		}
+		occurredMin := optTimeToNS(seg.OccurredAtMin)
+		occurredMax := optTimeToNS(seg.OccurredAtMax)
 		if err := qtx.InsertSegment(ctx, sqlcdb.InsertSegmentParams{
 			ID:            seg.ID,
 			RepoID:        seg.RepoID,
@@ -234,7 +238,10 @@ func (s *Service) UpsertSegment(ctx context.Context, seg domain.Segment) (domain
 			SummaryState:  string(seg.SummaryState),
 			AnchorPatchID: stringToNS(seg.AnchorPatchID),
 			Metadata:      seg.Metadata,
-			CreatedAt:     createdRFC,
+			OccurredAtMin: occurredMin,
+			OccurredAtMax: occurredMax,
+			IngestedAt:    stringToNS(ingestedRFC),
+			CreatedAt:     ingestedRFC,
 			UpdatedAt:     updatedRFC,
 		}); err != nil {
 			return domain.Segment{}, fmt.Errorf("repository: insert segment: %w", err)
@@ -243,12 +250,13 @@ func (s *Service) UpsertSegment(ctx context.Context, seg domain.Segment) (domain
 		return domain.Segment{}, err
 	default:
 		seg.ID = existing.ID
-		if seg.CreatedAt.IsZero() {
-			parsed, perr := parseRFC(existing.CreatedAt)
+		if seg.IngestedAt.IsZero() {
+			parsed, perr := parseRFCWithFallback(existing.IngestedAt, "")
 			if perr != nil {
-				return domain.Segment{}, fmt.Errorf("repository: parse existing segment created_at: %w", perr)
+				// Existing row missing both ingested_at and any fallback; surface.
+				return domain.Segment{}, fmt.Errorf("repository: parse existing segment ingested_at: %w", perr)
 			}
-			seg.CreatedAt = parsed
+			seg.IngestedAt = parsed
 		}
 		metaArg := seg.Metadata
 		if metaArg == "" {
@@ -258,10 +266,14 @@ func (s *Service) UpsertSegment(ctx context.Context, seg domain.Segment) (domain
 		if ferr != nil {
 			return domain.Segment{}, fmt.Errorf("repository: format segment updated_at: %w", ferr)
 		}
+		occurredMin := optTimeToNS(seg.OccurredAtMin)
+		occurredMax := optTimeToNS(seg.OccurredAtMax)
 		if err := qtx.UpdateSegment(ctx, sqlcdb.UpdateSegmentParams{
 			SummaryState:  string(seg.SummaryState),
 			AnchorPatchID: stringToNS(seg.AnchorPatchID),
 			Metadata:      metaArg,
+			OccurredAtMin: occurredMin,
+			OccurredAtMax: occurredMax,
 			UpdatedAt:     updatedRFC,
 			ID:            seg.ID,
 		}); err != nil {
@@ -342,18 +354,28 @@ func (s *Service) materializeOne(ctx context.Context, seg domain.Segment, provid
 		return errors.New("repository: segment has no is_current raw_changes")
 	}
 	changes := make([]domain.RawChange, len(rawRows))
+	var earliestAuthor time.Time
 	for i, r := range rawRows {
-		created, perr := parseRFC(r.CreatedAt)
+		ingested, perr := optNSToTime(r.IngestedAt)
 		if perr != nil {
-			return fmt.Errorf("repository: parse raw_change %s created_at: %w", r.ChangeID, perr)
+			return fmt.Errorf("repository: parse raw_change %s ingested_at: %w", r.ChangeID, perr)
 		}
 		changes[i] = domain.RawChange{
-			ChangeID:  r.ChangeID,
-			RepoID:    r.RepoID,
-			PatchID:   nsToString(r.PatchID),
-			CreatedAt: created,
+			ChangeID:   r.ChangeID,
+			RepoID:     r.RepoID,
+			PatchID:    nsToString(r.PatchID),
+			IngestedAt: ingested,
+		}
+		// earliest_author_time is computed by the SQL — capture the MIN across
+		// the change set so the synthesised activity entry's occurred_at can
+		// anchor to the source event time, not the materialise wall clock.
+		if at, ok := earliestTimeFromAny(r.EarliestAuthorTime); ok {
+			if earliestAuthor.IsZero() || at.Before(earliestAuthor) {
+				earliestAuthor = at
+			}
 		}
 	}
+	_ = earliestAuthor // consumed in a later commit (#8 wires it into entry.OccurredAt)
 
 	title, body, err := provider.Summarize(ctx, changes)
 	if err != nil {
@@ -486,14 +508,16 @@ func (s *Service) supersedeEntryInTx(ctx context.Context, qtx *sqlcdb.Queries, o
 // would also work; this is simpler.
 func (s *Service) listSegmentsNeedingMaterialize(ctx context.Context, scope MaterializeScope) ([]domain.Segment, error) {
 	args := []any{string(domain.SummaryStatePending), string(domain.SummaryStateStale)}
-	q := `SELECT id, repo_id, source, source_ref, summary_state, COALESCE(anchor_patch_id, ''), metadata, created_at, updated_at
-	        FROM segments
-	       WHERE summary_state IN (?, ?)`
+	q := `SELECT id, repo_id, source, source_ref, summary_state, COALESCE(anchor_patch_id, ''),
+                 metadata, COALESCE(ingested_at, created_at), updated_at,
+                 COALESCE(occurred_at_min, ''), COALESCE(occurred_at_max, '')
+            FROM segments
+           WHERE summary_state IN (?, ?)`
 	if scope.RepoID != "" {
 		q += ` AND repo_id = ?`
 		args = append(args, scope.RepoID)
 	}
-	q += ` ORDER BY created_at ASC`
+	q += ` ORDER BY ingested_at ASC`
 
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -504,19 +528,34 @@ func (s *Service) listSegmentsNeedingMaterialize(ctx context.Context, scope Mate
 	var out []domain.Segment
 	for rows.Next() {
 		var seg domain.Segment
-		var src, state, created, updated string
-		if err := rows.Scan(&seg.ID, &seg.RepoID, &src, &seg.SourceRef, &state, &seg.AnchorPatchID, &seg.Metadata, &created, &updated); err != nil {
+		var src, state, ingested, updated, occurredMin, occurredMax string
+		if err := rows.Scan(
+			&seg.ID, &seg.RepoID, &src, &seg.SourceRef, &state, &seg.AnchorPatchID,
+			&seg.Metadata, &ingested, &updated, &occurredMin, &occurredMax,
+		); err != nil {
 			return nil, err
 		}
 		seg.Source = domain.Source(src)
 		seg.SummaryState = domain.SummaryState(state)
-		seg.CreatedAt, err = parseRFC(created)
+		seg.IngestedAt, err = parseRFC(ingested)
 		if err != nil {
-			return nil, fmt.Errorf("repository: parse segment %s created_at: %w", seg.ID, err)
+			return nil, fmt.Errorf("repository: parse segment %s ingested_at: %w", seg.ID, err)
 		}
 		seg.UpdatedAt, err = parseRFC(updated)
 		if err != nil {
 			return nil, fmt.Errorf("repository: parse segment %s updated_at: %w", seg.ID, err)
+		}
+		if occurredMin != "" {
+			seg.OccurredAtMin, err = parseRFC(occurredMin)
+			if err != nil {
+				return nil, fmt.Errorf("repository: parse segment %s occurred_at_min: %w", seg.ID, err)
+			}
+		}
+		if occurredMax != "" {
+			seg.OccurredAtMax, err = parseRFC(occurredMax)
+			if err != nil {
+				return nil, fmt.Errorf("repository: parse segment %s occurred_at_max: %w", seg.ID, err)
+			}
 		}
 		out = append(out, seg)
 	}

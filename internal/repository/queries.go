@@ -34,9 +34,16 @@ func (s *Service) ListEntries(ctx context.Context, filter ListFilter) ([]domain.
 		where = append(where, "repo_id = ?")
 		args = append(args, filter.RepoID)
 	}
-	q := `SELECT id, logical_id, type, title, body, source, COALESCE(source_ref, ''), origin, COALESCE(repo_id, ''), COALESCE(author, ''), COALESCE(status, ''), is_current, COALESCE(superseded_by, ''), metadata, created_at, updated_at
-	        FROM entries WHERE ` + strings.Join(where, " AND ") +
-		` ORDER BY created_at DESC LIMIT ?`
+	q := `SELECT id, logical_id, type, title, body, source, COALESCE(source_ref, ''),
+                 COALESCE(source_event_hash, ''), origin, COALESCE(repo_id, ''),
+                 COALESCE(author, ''), COALESCE(actor, ''), COALESCE(reason, ''),
+                 COALESCE(status, ''), is_current, COALESCE(superseded_by, ''),
+                 metadata, COALESCE(version, 1), COALESCE(quality_degraded, 0),
+                 COALESCE(occurred_at, ingested_at, created_at),
+                 COALESCE(ingested_at, created_at),
+                 updated_at
+            FROM entries WHERE ` + strings.Join(where, " AND ") +
+		` ORDER BY occurred_at DESC, ingested_at DESC LIMIT ?`
 	args = append(args, filter.Limit)
 
 	rows, err := s.db.QueryContext(ctx, q, args...)
@@ -48,22 +55,35 @@ func (s *Service) ListEntries(ctx context.Context, filter ListFilter) ([]domain.
 	var out []domain.Entry
 	for rows.Next() {
 		var e domain.Entry
-		var typ, src, origin, status, srcRef, repoID, author, supBy, created, updated string
-		var isCur int
-		if err := rows.Scan(&e.ID, &e.LogicalID, &typ, &e.Title, &e.Body, &src, &srcRef, &origin, &repoID, &author, &status, &isCur, &supBy, &e.Metadata, &created, &updated); err != nil {
+		var typ, src, origin, status, srcRef, hash, repoID, author, actor, reason, supBy, occurred, ingested, updated string
+		var isCur, qDeg, version int
+		if err := rows.Scan(
+			&e.ID, &e.LogicalID, &typ, &e.Title, &e.Body, &src, &srcRef,
+			&hash, &origin, &repoID, &author, &actor, &reason, &status,
+			&isCur, &supBy, &e.Metadata, &version, &qDeg,
+			&occurred, &ingested, &updated,
+		); err != nil {
 			return nil, err
 		}
 		e.Type = domain.EntryType(typ)
 		e.Source = domain.Source(src)
 		e.SourceRef = srcRef
+		e.SourceEventHash = hash
 		e.Origin = domain.Origin(origin)
 		e.RepoID = repoID
 		e.Author = author
+		e.Actor = actor
+		e.Reason = reason
 		e.Status = domain.Status(status)
 		e.IsCurrent = isCur == 1
 		e.SupersededBy = supBy
-		if e.CreatedAt, err = parseRFC(created); err != nil {
-			return nil, fmt.Errorf("repository: parse entry %s created_at: %w", e.ID, err)
+		e.Version = version
+		e.QualityDegraded = qDeg == 1
+		if e.OccurredAt, err = parseRFC(occurred); err != nil {
+			return nil, fmt.Errorf("repository: parse entry %s occurred_at: %w", e.ID, err)
+		}
+		if e.IngestedAt, err = parseRFC(ingested); err != nil {
+			return nil, fmt.Errorf("repository: parse entry %s ingested_at: %w", e.ID, err)
 		}
 		if e.UpdatedAt, err = parseRFC(updated); err != nil {
 			return nil, fmt.Errorf("repository: parse entry %s updated_at: %w", e.ID, err)

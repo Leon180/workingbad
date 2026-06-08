@@ -44,8 +44,8 @@ func TestInsertEntry_ActivitySuccess(t *testing.T) {
 	if !got.IsCurrent {
 		t.Error("IsCurrent should be true after InsertEntry")
 	}
-	if got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() {
-		t.Error("timestamps should be set")
+	if got.IngestedAt.IsZero() || got.OccurredAt.IsZero() || got.UpdatedAt.IsZero() {
+		t.Error("bitemporal timestamps should be set after InsertEntry")
 	}
 	assertFTSHit(t, s.db, "refactor")
 }

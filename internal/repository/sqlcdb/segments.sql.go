@@ -11,28 +11,43 @@ import (
 )
 
 const getCurrentChangesForSegment = `-- name: GetCurrentChangesForSegment :many
-SELECT rc.change_id, rc.repo_id, rc.patch_id, rc.created_at
+SELECT rc.change_id, rc.repo_id, rc.patch_id, rc.ingested_at,
+       (SELECT MIN(c.author_time)
+          FROM raw_commits c
+         WHERE c.change_id = rc.change_id AND c.is_current = 1) AS earliest_author_time
   FROM segment_raw sr
   JOIN raw_changes rc ON rc.change_id = sr.change_id
  WHERE sr.segment_id = ?
    AND EXISTS (SELECT 1 FROM raw_commits c WHERE c.change_id = rc.change_id AND c.is_current = 1)
- ORDER BY rc.created_at ASC
+ ORDER BY earliest_author_time ASC
 `
 
-func (q *Queries) GetCurrentChangesForSegment(ctx context.Context, segmentID string) ([]RawChange, error) {
+type GetCurrentChangesForSegmentRow struct {
+	ChangeID           string
+	RepoID             string
+	PatchID            sql.NullString
+	IngestedAt         sql.NullString
+	EarliestAuthorTime interface{}
+}
+
+// Returns each live change in the segment plus the earliest author_time of
+// its current raw_commit(s). Bitemporal materialise reads this to anchor
+// the synthesised activity entry's occurred_at to the source event time.
+func (q *Queries) GetCurrentChangesForSegment(ctx context.Context, segmentID string) ([]GetCurrentChangesForSegmentRow, error) {
 	rows, err := q.db.QueryContext(ctx, getCurrentChangesForSegment, segmentID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []RawChange{}
+	items := []GetCurrentChangesForSegmentRow{}
 	for rows.Next() {
-		var i RawChange
+		var i GetCurrentChangesForSegmentRow
 		if err := rows.Scan(
 			&i.ChangeID,
 			&i.RepoID,
 			&i.PatchID,
-			&i.CreatedAt,
+			&i.IngestedAt,
+			&i.EarliestAuthorTime,
 		); err != nil {
 			return nil, err
 		}
@@ -48,7 +63,7 @@ func (q *Queries) GetCurrentChangesForSegment(ctx context.Context, segmentID str
 }
 
 const getSegmentByKey = `-- name: GetSegmentByKey :one
-SELECT id, created_at FROM segments
+SELECT id, occurred_at_min, occurred_at_max, ingested_at FROM segments
  WHERE repo_id = ? AND source = ? AND source_ref = ?
 `
 
@@ -59,22 +74,30 @@ type GetSegmentByKeyParams struct {
 }
 
 type GetSegmentByKeyRow struct {
-	ID        string
-	CreatedAt string
+	ID            string
+	OccurredAtMin sql.NullString
+	OccurredAtMax sql.NullString
+	IngestedAt    sql.NullString
 }
 
 func (q *Queries) GetSegmentByKey(ctx context.Context, arg GetSegmentByKeyParams) (GetSegmentByKeyRow, error) {
 	row := q.db.QueryRowContext(ctx, getSegmentByKey, arg.RepoID, arg.Source, arg.SourceRef)
 	var i GetSegmentByKeyRow
-	err := row.Scan(&i.ID, &i.CreatedAt)
+	err := row.Scan(
+		&i.ID,
+		&i.OccurredAtMin,
+		&i.OccurredAtMax,
+		&i.IngestedAt,
+	)
 	return i, err
 }
 
 const insertSegment = `-- name: InsertSegment :exec
 INSERT INTO segments
-    (id, repo_id, source, source_ref, summary_state, anchor_patch_id, metadata, created_at, updated_at)
+    (id, repo_id, source, source_ref, summary_state, anchor_patch_id, metadata,
+     occurred_at_min, occurred_at_max, ingested_at, created_at, updated_at)
 VALUES
-    (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertSegmentParams struct {
@@ -85,6 +108,9 @@ type InsertSegmentParams struct {
 	SummaryState  string
 	AnchorPatchID sql.NullString
 	Metadata      string
+	OccurredAtMin sql.NullString
+	OccurredAtMax sql.NullString
+	IngestedAt    sql.NullString
 	CreatedAt     string
 	UpdatedAt     string
 }
@@ -98,6 +124,9 @@ func (q *Queries) InsertSegment(ctx context.Context, arg InsertSegmentParams) er
 		arg.SummaryState,
 		arg.AnchorPatchID,
 		arg.Metadata,
+		arg.OccurredAtMin,
+		arg.OccurredAtMax,
+		arg.IngestedAt,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)
@@ -137,7 +166,8 @@ func (q *Queries) MarkSegmentMaterialized(ctx context.Context, arg MarkSegmentMa
 
 const updateSegment = `-- name: UpdateSegment :exec
 UPDATE segments
-   SET summary_state = ?, anchor_patch_id = ?, metadata = ?, updated_at = ?
+   SET summary_state = ?, anchor_patch_id = ?, metadata = ?,
+       occurred_at_min = ?, occurred_at_max = ?, updated_at = ?
  WHERE id = ?
 `
 
@@ -145,6 +175,8 @@ type UpdateSegmentParams struct {
 	SummaryState  string
 	AnchorPatchID sql.NullString
 	Metadata      string
+	OccurredAtMin sql.NullString
+	OccurredAtMax sql.NullString
 	UpdatedAt     string
 	ID            string
 }
@@ -154,6 +186,8 @@ func (q *Queries) UpdateSegment(ctx context.Context, arg UpdateSegmentParams) er
 		arg.SummaryState,
 		arg.AnchorPatchID,
 		arg.Metadata,
+		arg.OccurredAtMin,
+		arg.OccurredAtMax,
 		arg.UpdatedAt,
 		arg.ID,
 	)

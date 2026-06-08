@@ -23,8 +23,7 @@ func (q *Queries) DetachEdge(ctx context.Context, id string) (int64, error) {
 }
 
 const getEdgeByID = `-- name: GetEdgeByID :one
-SELECT id, from_id, to_id, relation, is_current, superseded_by, metadata, created_at
-  FROM edges WHERE id = ?
+SELECT id, from_id, to_id, relation, is_current, superseded_by, metadata, created_at, occurred_at, ingested_at, actor, reason FROM edges WHERE id = ?
 `
 
 func (q *Queries) GetEdgeByID(ctx context.Context, id string) (Edge, error) {
@@ -39,19 +38,23 @@ func (q *Queries) GetEdgeByID(ctx context.Context, id string) (Edge, error) {
 		&i.SupersededBy,
 		&i.Metadata,
 		&i.CreatedAt,
+		&i.OccurredAt,
+		&i.IngestedAt,
+		&i.Actor,
+		&i.Reason,
 	)
 	return i, err
 }
 
 const getGoalActivitiesByLogicalID = `-- name: GetGoalActivitiesByLogicalID :many
-SELECT e.id, e.logical_id, e.type, e.title, e.body, e.source, e.source_ref, e.origin, e.repo_id, e.author, e.status, e.is_current, e.superseded_by, e.metadata, e.created_at, e.updated_at
+SELECT e.id, e.logical_id, e.type, e.title, e.body, e.source, e.source_ref, e.origin, e.repo_id, e.author, e.status, e.is_current, e.superseded_by, e.metadata, e.created_at, e.updated_at, e.occurred_at, e.ingested_at, e.actor, e.reason, e.source_event_hash, e.version, e.quality_degraded
   FROM entries AS e
   JOIN edges   AS ed ON ed.from_id = e.id AND ed.relation = 'part_of' AND ed.is_current = 1
   JOIN entries AS g  ON ed.to_id = g.id
  WHERE g.logical_id = (SELECT seed.logical_id FROM entries AS seed WHERE seed.id = ?)
    AND e.type = 'activity'
    AND e.is_current = 1
- ORDER BY e.created_at ASC
+ ORDER BY e.occurred_at ASC, e.ingested_at ASC
 `
 
 func (q *Queries) GetGoalActivitiesByLogicalID(ctx context.Context, id string) ([]Entry, error) {
@@ -80,6 +83,13 @@ func (q *Queries) GetGoalActivitiesByLogicalID(ctx context.Context, id string) (
 			&i.Metadata,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.OccurredAt,
+			&i.IngestedAt,
+			&i.Actor,
+			&i.Reason,
+			&i.SourceEventHash,
+			&i.Version,
+			&i.QualityDegraded,
 		); err != nil {
 			return nil, err
 		}
@@ -95,15 +105,16 @@ func (q *Queries) GetGoalActivitiesByLogicalID(ctx context.Context, id string) (
 }
 
 const getIncomingLiveEdges = `-- name: GetIncomingLiveEdges :many
-SELECT id, from_id, relation, metadata FROM edges
+SELECT id, from_id, relation, metadata, occurred_at FROM edges
  WHERE to_id = ? AND is_current = 1
 `
 
 type GetIncomingLiveEdgesRow struct {
-	ID       string
-	FromID   string
-	Relation string
-	Metadata string
+	ID         string
+	FromID     string
+	Relation   string
+	Metadata   string
+	OccurredAt sql.NullString
 }
 
 func (q *Queries) GetIncomingLiveEdges(ctx context.Context, toID string) ([]GetIncomingLiveEdgesRow, error) {
@@ -120,6 +131,7 @@ func (q *Queries) GetIncomingLiveEdges(ctx context.Context, toID string) ([]GetI
 			&i.FromID,
 			&i.Relation,
 			&i.Metadata,
+			&i.OccurredAt,
 		); err != nil {
 			return nil, err
 		}
@@ -153,15 +165,16 @@ func (q *Queries) GetLiveEdgeByTriple(ctx context.Context, arg GetLiveEdgeByTrip
 }
 
 const getOutgoingLiveEdges = `-- name: GetOutgoingLiveEdges :many
-SELECT id, to_id, relation, metadata FROM edges
+SELECT id, to_id, relation, metadata, occurred_at FROM edges
  WHERE from_id = ? AND is_current = 1
 `
 
 type GetOutgoingLiveEdgesRow struct {
-	ID       string
-	ToID     string
-	Relation string
-	Metadata string
+	ID         string
+	ToID       string
+	Relation   string
+	Metadata   string
+	OccurredAt sql.NullString
 }
 
 func (q *Queries) GetOutgoingLiveEdges(ctx context.Context, fromID string) ([]GetOutgoingLiveEdgesRow, error) {
@@ -178,6 +191,7 @@ func (q *Queries) GetOutgoingLiveEdges(ctx context.Context, fromID string) ([]Ge
 			&i.ToID,
 			&i.Relation,
 			&i.Metadata,
+			&i.OccurredAt,
 		); err != nil {
 			return nil, err
 		}
@@ -193,17 +207,23 @@ func (q *Queries) GetOutgoingLiveEdges(ctx context.Context, fromID string) ([]Ge
 }
 
 const insertEdge = `-- name: InsertEdge :exec
-INSERT INTO edges (id, from_id, to_id, relation, is_current, metadata, created_at)
-VALUES (?, ?, ?, ?, 1, ?, ?)
+INSERT INTO edges
+    (id, from_id, to_id, relation, is_current, metadata,
+     actor, reason, occurred_at, ingested_at, created_at)
+VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertEdgeParams struct {
-	ID        string
-	FromID    string
-	ToID      string
-	Relation  string
-	Metadata  string
-	CreatedAt string
+	ID         string
+	FromID     string
+	ToID       string
+	Relation   string
+	Metadata   string
+	Actor      sql.NullString
+	Reason     sql.NullString
+	OccurredAt sql.NullString
+	IngestedAt sql.NullString
+	CreatedAt  string
 }
 
 func (q *Queries) InsertEdge(ctx context.Context, arg InsertEdgeParams) error {
@@ -213,6 +233,10 @@ func (q *Queries) InsertEdge(ctx context.Context, arg InsertEdgeParams) error {
 		arg.ToID,
 		arg.Relation,
 		arg.Metadata,
+		arg.Actor,
+		arg.Reason,
+		arg.OccurredAt,
+		arg.IngestedAt,
 		arg.CreatedAt,
 	)
 	return err
