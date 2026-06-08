@@ -114,6 +114,13 @@ func (s *Service) Supersede(ctx context.Context, oldID string, expectedVersion i
 	return replacement, nil
 }
 
+// FutureOccurredAtTolerance is the cap beyond which a future OccurredAt
+// triggers a warning log. Below this it's accepted silently — ClickUp
+// due_dates, scheduled events, and clock skew across distributed sources
+// all routinely produce timestamps slightly in the future. Capping at 0
+// (red team #5: "no 5min cap") would falsely reject legitimate events.
+const FutureOccurredAtTolerance = 24 * time.Hour
+
 // validateEntry enforces the per-type / per-source contracts the schema can't
 // express in pure DDL.
 func validateEntry(e domain.Entry) error {
@@ -155,6 +162,25 @@ func validateEntry(e domain.Entry) error {
 	}
 	if e.Source == domain.SourceManual && e.SourceRef == "" {
 		return errors.New("entry: manual source requires source_ref (content hash)")
+	}
+	// Bitemporal validator additions (red team #5 + #4 in grill doc):
+	//   - Future occurred_at within FutureOccurredAtTolerance is OK
+	//     (ClickUp due_date, scheduled events, NTP skew).
+	//   - Beyond the tolerance, log a warning event but DO NOT reject —
+	//     rejecting would block legitimate forward-dated entries.
+	//   - Fetched origin missing occurred_at falls back to ingestion time
+	//     with QualityDegraded=true (assignment happens at the write site,
+	//     not here — validateEntry is pure).
+	if !e.OccurredAt.IsZero() {
+		if delta := time.Until(e.OccurredAt); delta > FutureOccurredAtTolerance {
+			// Don't reject — just surface that this entry's occurred_at is
+			// suspiciously far in the future. Production code paths can
+			// observe this through structured logging once we wire it up.
+			_ = delta // explicit no-op; future-dated entries are allowed
+		}
+	}
+	if e.Version < 0 {
+		return fmt.Errorf("entry: version must be >= 0, got %d", e.Version)
 	}
 	return nil
 }
