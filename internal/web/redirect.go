@@ -59,8 +59,15 @@ func safeRedirectPath(r *http.Request, target, fallback string) string {
 	if path == "" {
 		return fallback
 	}
-	// Reject relative-style or empty paths.
-	if !strings.HasPrefix(path, "/") {
+	// Canonical CodeQL go/bad-redirect-check pattern at the redirect
+	// site: require leading slash AND second character is not "/" or
+	// "\". The pre-parse guard at line ~36 already rejects the
+	// backslash-smuggled shape on the raw target string (url.Parse
+	// would have escaped "\" to "%5C" by now, so this check on
+	// path[1] is dead for that input), but writing the pattern out
+	// here is what stops CodeQL's flow analysis re-flagging on every
+	// scan. Belt-and-suspenders, no per-scan dismiss tax.
+	if len(path) < 2 || path[0] != '/' || path[1] == '/' || path[1] == '\\' {
 		return fallback
 	}
 	// Reject any path component that would traverse the URL space. Browsers
