@@ -1,0 +1,81 @@
+{{template "base" .}}
+{{define "content"}}
+<h1>entries</h1>
+
+{{if .MaterializedNum}}
+<div class="banner success">materialized {{.MaterializedNum}} segment{{if ne .MaterializedNum "1"}}s{{end}}{{if and .FailedNum (ne .FailedNum "0")}}, {{.FailedNum}} failed{{end}}</div>
+{{end}}
+
+{{if .AtParseErr}}
+<div class="banner error">at parse error: {{.AtParseErr}} — showing live entries</div>
+{{else if not .AsOf.IsZero}}
+<div class="banner timetravel">
+  ⏳ viewing state at <strong>{{fmtTime .AsOf}}</strong>
+  <a href="/{{if .ActiveType}}?type={{.ActiveType}}{{end}}" class="reset">back to live</a>
+</div>
+{{end}}
+
+<form method="get" action="/" class="filter-bar">
+  <label>
+    type
+    <select name="type" onchange="this.form.submit()">
+      <option value="">all</option>
+      {{- $active := .ActiveType }}
+      {{range .Types}}
+        <option value="{{.}}"{{if eq . $active}} selected{{end}}>{{.}}</option>
+      {{end}}
+    </select>
+  </label>
+  <label>
+    limit
+    <input type="number" name="limit" min="1" max="1000" value="{{.ActiveLimit}}" style="width: 5rem">
+  </label>
+  <label>
+    as of (RFC3339 or YYYY-MM-DD)
+    <input type="text" name="at" value="{{.ActiveAt}}" placeholder="now" style="width: 14rem">
+  </label>
+  <button type="submit">apply</button>
+  {{if or .ActiveType (ne .ActiveLimit 50) .ActiveAt}}
+    <a href="/" class="reset">reset</a>
+  {{end}}
+</form>
+
+{{if .Entries}}
+<table>
+  <thead>
+    <tr>
+      <th>type</th>
+      <th>status</th>
+      <th>title</th>
+      <th>occurred</th>
+      <th>ingested</th>
+      <th>v</th>
+      <th>id</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Entries}}
+    <tr>
+      <td>{{.Type}}</td>
+      <td>{{if .Status}}{{.Status}}{{else}}-{{end}}</td>
+      <td>
+        {{- if eq .Type "goal" -}}
+          <a href="/goals/{{.ID}}">{{.Title}}</a>
+        {{- else -}}
+          <a href="/entries/{{.ID}}">{{.Title}}</a>
+        {{- end -}}
+      </td>
+      <td class="time">{{fmtTime .OccurredAt}}</td>
+      <td class="time">{{fmtTime .IngestedAt}}</td>
+      <td>v{{.Version}}</td>
+      <td class="id">{{.ID}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+<p class="meta">{{len .Entries}} entries</p>
+{{else}}
+<p class="empty">No entries match. <a href="/">clear filters</a> or create one via CLI:</p>
+<pre>workingbad note "title here"</pre>
+{{end}}
+{{end}}

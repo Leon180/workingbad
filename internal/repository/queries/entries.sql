@@ -30,3 +30,10 @@ SELECT id FROM entries
    AND source_event_hash = ?
    AND is_current = 1
  LIMIT 1;
+
+-- name: GetEntryLogicalIDByID :one
+-- Cheap targeted lookup for the Web UI's resolveLogical fallback path.
+-- Pre-fix the handler scanned ListEntries(Limit=1000) and silently 404'd
+-- past row 1000 (architect review #10 P1, hunter P1). This replaces the
+-- scan with an indexed PK lookup.
+SELECT logical_id FROM entries WHERE id = ?;

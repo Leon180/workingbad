@@ -1,0 +1,46 @@
+version: 2
+
+# Dependabot config — updates Go module deps + the GitHub Actions we pin
+# by SHA. Comments on each pinned action (e.g. `# v4.3.1`) get rewritten
+# in lock-step with the SHA bump, so reviewing a Dependabot PR you can
+# still see what version moved without resolving the hash by hand.
+#
+# Open PR count is intentionally bounded — Dependabot churn is a known
+# review-fatigue source, and we'd rather batch a missed week than fight
+# a 20-PR queue.
+
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: UTC
+    open-pull-requests-limit: 5
+    labels: [ "eng-quality" ]
+    commit-message:
+      prefix: "deps"
+      include: scope
+    groups:
+      # Group minor + patch updates so Dependabot doesn't open one PR
+      # per module on a quiet week. Major bumps still get their own PR
+      # since they often require code changes.
+      go-deps-minor-patch:
+        update-types: [ "minor", "patch" ]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:30"
+      timezone: UTC
+    open-pull-requests-limit: 5
+    labels: [ "eng-quality" ]
+    commit-message:
+      prefix: "ci"
+      include: scope
+    groups:
+      ci-actions:
+        update-types: [ "minor", "patch" ]
