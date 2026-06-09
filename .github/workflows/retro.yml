@@ -1,0 +1,114 @@
+name: Auto-Retro
+
+# Process model (per 2026-06-09 conversation): every N=3 merged PRs to
+# main, open a retro issue prefilled with the window's PR list. The
+# retro itself is reviewed by the user; what falls out (decisions,
+# follow-up actions) becomes the next cycle's inputs.
+#
+# Why N=3: small enough to remember context, large enough that the retro
+# surfaces patterns rather than nitpicks. Tuned later in retro #1.
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+  # Manual trigger so we can run a retro on-demand mid-window.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  maybe-open-retro:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: count PRs since last retro and open new one if N reached
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const RETRO_WINDOW = 3;
+
+            // 1. Find the most recent retro issue (closed or open).
+            //    Use it as the start-of-window marker.
+            const retros = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'retro',
+              state: 'all',
+              sort: 'created',
+              direction: 'desc',
+              per_page: 1,
+            });
+            const windowStart = retros.data.length > 0
+              ? retros.data[0].created_at
+              : '1970-01-01T00:00:00Z';
+            core.info(`window start: ${windowStart}`);
+
+            // 2. List all PRs merged into main since the window start.
+            //    The search API is the cheapest way: filter by base + merged.
+            const q = `repo:${context.repo.owner}/${context.repo.repo} is:pr is:merged base:main merged:>${windowStart}`;
+            const merged = await github.rest.search.issuesAndPullRequests({
+              q,
+              sort: 'created',
+              order: 'asc',
+              per_page: 100,
+            });
+            core.info(`merged PRs in window: ${merged.data.total_count}`);
+
+            const mergedPrs = merged.data.items;
+            if (mergedPrs.length < RETRO_WINDOW && context.eventName !== 'workflow_dispatch') {
+              core.info(`only ${mergedPrs.length} PRs merged; need ${RETRO_WINDOW}`);
+              return;
+            }
+
+            // 3. Build the retro body. Group by epic label where possible.
+            const lines = [
+              '## Window',
+              '',
+              `Since: ${windowStart}`,
+              `Count: ${mergedPrs.length} merged PR(s)`,
+              '',
+              '### PRs in this window',
+              '',
+              ...mergedPrs.map(pr =>
+                `- #${pr.number} **${pr.title}** ` +
+                `(${pr.labels.map(l => '`' + l.name + '`').join(' ') || '_no-label_'})`
+              ),
+              '',
+              '## ① What landed (action / activity)',
+              '',
+              '_Auto-list above; brief grouping by epic if useful._',
+              '',
+              '## ② What worked',
+              '',
+              '_Pattern or workflow worth keeping._',
+              '',
+              '## ③ What hurt',
+              '',
+              '_What slowed us down or caused rework — cite PRs / commits._',
+              '',
+              '## ④ What to do differently',
+              '',
+              '_Concrete change for the next cycle. Each item → follow-up issue or `decision` entry._',
+              '',
+              '## ⑤ Carry-overs',
+              '',
+              '_Issues / questions the next cycle inherits._',
+            ];
+
+            const today = new Date().toISOString().slice(0, 10);
+            const title = `retro: ${today} (${mergedPrs.length} PRs)`;
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body: lines.join('\n'),
+              labels: ['retro'],
+            });
+            core.notice(`opened retro for window ${windowStart} → now (${mergedPrs.length} PRs)`);
