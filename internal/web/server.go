@@ -107,10 +107,18 @@ func NewServer(svc *repository.Service, cfg config.Web) (*Server, error) {
 	}
 	s.listener = ln
 
-	// Stack: CrossOriginProtection → Host allowlist → mux. Order matters:
-	// the outermost (CrossOriginProtection) sees the raw request first
-	// and bails fastest on bad input.
-	handler := s.hostAllowlist(s.mux)
+	// Stack: CrossOriginProtection → Host allowlist → mutationGuard → mux.
+	// Order matters:
+	//   - CrossOriginProtection outermost: bails fastest on cross-origin
+	//     browser POSTs via Sec-Fetch-Site.
+	//   - Host allowlist next: closes the DNS-rebinding hole at HTTP
+	//     layer (the listener bind is the other half).
+	//   - mutationGuard innermost: identity today, the named seam where
+	//     CSRF / local-token-auth / rate-limit / actor-injection land
+	//     when Phase 2 needs them — additive, no handler changes
+	//     required (architect review #10 P0).
+	handler := s.mutationGuard(s.mux)
+	handler = s.hostAllowlist(handler)
 	cop := http.NewCrossOriginProtection()
 	handler = cop.Handler(handler)
 
