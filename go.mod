@@ -1,6 +1,6 @@
 module github.com/Leon180/workingbad
 
-go 1.25.7
+go 1.25.11
 
 require (
 	github.com/go-playground/validator/v10 v10.30.3
