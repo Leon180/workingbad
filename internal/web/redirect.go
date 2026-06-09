@@ -38,6 +38,15 @@ func safeRedirectPath(r *http.Request, target, fallback string) string {
 		return fallback
 	}
 
+	// CodeQL go/bad-redirect-check: catch backslash-smuggled foreign
+	// hosts BEFORE url.Parse runs, because Parse URL-escapes "\" to
+	// "%5C" which would let "/\\evil.com" sail past a post-parse check.
+	// Browsers (Chrome, Edge) normalise "\" → "/" on the wire, so any
+	// "/\..." or "//..." shape can become a protocol-relative redirect.
+	if len(target) >= 2 && target[0] == '/' && (target[1] == '/' || target[1] == '\\') {
+		return fallback
+	}
+
 	u, err := url.Parse(target)
 	if err != nil {
 		return fallback
