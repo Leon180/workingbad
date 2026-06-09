@@ -23,13 +23,37 @@ import (
 // allCommands returns the public CLI surface.
 func allCommands() []*cli.Command {
 	return []*cli.Command{
-		{Name: "migrate", Usage: "apply forward-only migrations and exit; reports applied version", Action: actionMigrate},
-		{Name: "version", Usage: "print binary and (if available) migration version", Action: actionVersion},
+		{
+			Name:  "migrate",
+			Usage: "run pending database migrations and print the resulting version",
+			Description: "Applies any forward-only migrations bundled into the binary and exits.\n" +
+				"Migrations also run automatically on every command that opens the DB,\n" +
+				"so this is mainly useful for inspecting the post-upgrade schema version.\n\n" +
+				"EXAMPLE:\n" +
+				"  workingbad migrate",
+			Action: actionMigrate,
+		},
+		{
+			Name:  "version",
+			Usage: "print the binary version and current migration version",
+			Description: "Prints the workingbad binary version. If the configured database is\n" +
+				"reachable it also prints the migration version it has been brought up to.\n\n" +
+				"EXAMPLE:\n" +
+				"  workingbad version",
+			Action: actionVersion,
+		},
 		{
 			Name:  "serve",
-			Usage: "start the localhost Web UI (127.0.0.1 only)",
+			Usage: "start the localhost Web UI on 127.0.0.1 (blocks until Ctrl-C)",
+			Description: "Launches the embedded net/http server bound to 127.0.0.1 only. The UI\n" +
+				"shares the same RepositoryService as the CLI, so anything you create here\n" +
+				"is visible there immediately. Press Ctrl-C to drain and stop.\n\n" +
+				"EXAMPLES:\n" +
+				"  workingbad serve\n" +
+				"  workingbad serve --port 7890\n" +
+				"  workingbad --config ~/.workingbad/config.yaml serve",
 			Flags: []cli.Flag{
-				&cli.IntFlag{Name: "port", Usage: "override the configured port (default from config.yaml)"},
+				&cli.IntFlag{Name: "port", Usage: "listen port (overrides web.port from config.yaml; 0 = use config)"},
 			},
 			Action: actionServe,
 		},
@@ -37,61 +61,118 @@ func allCommands() []*cli.Command {
 		// Phase 1 dogfooding surface.
 		{
 			Name:      "note",
-			Usage:     "create a research entry (manual)",
-			ArgsUsage: "<title> [body ...]",
-			Action:    actionNote,
+			Usage:     "record a free-form research note (entry of type=research)",
+			ArgsUsage: "<title> [body words...]",
+			Description: "Creates a research entry (origin=local, source=manual). Useful for\n" +
+				"capturing investigations, links, half-baked ideas — anything that is not\n" +
+				"yet a decision or a goal. The body is everything after the title, joined\n" +
+				"by single spaces; quote multi-word phrases to preserve them.\n\n" +
+				"EXAMPLE:\n" +
+				"  workingbad note \"sqlite WAL\" \"WAL gives concurrent readers + 1 writer\"",
+			Action: actionNote,
 		},
 		{
 			Name:      "decision",
-			Usage:     "create a decision entry (manual)",
-			ArgsUsage: "<title> [body ...]",
-			Action:    actionDecision,
+			Usage:     "record a decision you have made (entry of type=decision)",
+			ArgsUsage: "<title> [body words...]",
+			Description: "Creates a decision entry — the dogfood unit for architecture / product\n" +
+				"calls. Pair with `attach` to link the decision under the goal it serves.\n\n" +
+				"EXAMPLE:\n" +
+				"  workingbad decision \"use modernc/sqlite\" \"pure Go, no cgo, FTS5 built-in\"",
+			Action: actionDecision,
 		},
 		{
 			Name:      "goal",
-			Usage:     "create a goal entry (status defaults to open)",
-			ArgsUsage: "<title> [body ...]",
-			Action:    actionGoal,
+			Usage:     "create a new goal (status starts at 'open'; use `status` to advance)",
+			ArgsUsage: "<title> [body words...]",
+			Description: "A goal is the aggregation root: activities, notes and decisions get\n" +
+				"attached to it via `attach`. Status defaults to open; advance it later\n" +
+				"with `workingbad status <goal-id> <new-status>`.\n\n" +
+				"EXAMPLE:\n" +
+				"  workingbad goal \"ship Slice B\" \"web UI + bitemporal time-travel\"",
+			Action: actionGoal,
 		},
 		{
 			Name:  "list",
-			Usage: "list entries (live by default; --at for time-travel)",
+			Usage: "list live entries (or, with --at, the state at a past timestamp)",
+			Description: "Without --at: prints every is_current=1 entry, newest first. With --at:\n" +
+				"prints the bitemporal snapshot — what was live at that wall-clock moment,\n" +
+				"using ingested_at to roll back the supersede chain.\n\n" +
+				"EXAMPLES:\n" +
+				"  workingbad list\n" +
+				"  workingbad list --type goal\n" +
+				"  workingbad list --type decision --limit 50\n" +
+				"  workingbad list --at 2026-06-08T14:00:00Z\n" +
+				"  workingbad list --at 2026-06-08            # date = midnight UTC",
 			Flags: []cli.Flag{
-				&cli.StringFlag{Name: "type", Usage: "filter by entry type (activity|research|discuss|decision|goal)"},
-				&cli.StringFlag{Name: "repo", Usage: "filter by repo_id"},
-				&cli.IntFlag{Name: "limit", Value: 20, Usage: "max rows to print"},
-				&cli.StringFlag{Name: "at", Usage: "time-travel: list state at RFC3339 timestamp (e.g. 2026-06-08T14:00:00Z)"},
+				&cli.StringFlag{Name: "type", Usage: "show only entries of this type (activity|research|discuss|decision|goal)"},
+				&cli.StringFlag{Name: "repo", Usage: "show only entries from this repo_id (isolation key; empty = all repos)"},
+				&cli.IntFlag{Name: "limit", Value: 20, Usage: "stop after printing this many rows"},
+				&cli.StringFlag{Name: "at", Usage: "time-travel snapshot at RFC3339 timestamp or YYYY-MM-DD (midnight UTC)"},
 			},
 			Action: actionList,
 		},
 		{
 			Name:      "history",
-			Usage:     "show full supersede chain of a logical entry",
+			Usage:     "print every version of a logical entry, oldest to newest (bitemporal git log)",
 			ArgsUsage: "<logical-id>",
-			Action:    actionHistory,
+			Description: "Walks the supersede chain for a logical_id and prints each version with\n" +
+				"its occurred_at (when the event happened) next to its ingested_at (when\n" +
+				"we recorded it). The current version is marked.\n\n" +
+				"EXAMPLE:\n" +
+				"  workingbad history 0192f6c0-7e31-7c2b-9b8a-1b2c3d4e5f60",
+			Action: actionHistory,
 		},
 		{
 			Name:      "attach",
-			Usage:     "attach an entry to a goal via part_of edge",
+			Usage:     "link an entry under a goal (creates a part_of edge)",
 			ArgsUsage: "<entry-id> <goal-id>",
-			Action:    actionAttach,
+			Description: "Makes <entry-id> show up inside <goal-id>'s aggregation. Both arguments\n" +
+				"are entry IDs (not logical_ids). Use `list` to find them.\n\n" +
+				"EXAMPLE:\n" +
+				"  workingbad attach <note-id> <goal-id>",
+			Action: actionAttach,
 		},
 		{
 			Name:      "detach",
-			Usage:     "mark an attach edge as detached",
+			Usage:     "mark a part_of edge as detached (append-only; original row is preserved)",
 			ArgsUsage: "<edge-id>",
-			Action:    actionDetach,
+			Description: "Edges are append-only, so detach does not delete — it supersedes the\n" +
+				"edge with a detached version. The entry stops appearing under the goal\n" +
+				"but the history is retained for time-travel.\n\n" +
+				"EXAMPLE:\n" +
+				"  workingbad detach <edge-id>",
+			Action: actionDetach,
 		},
 		{
 			Name:      "status",
-			Usage:     "set a goal's status",
+			Usage:     "advance a goal's status (creates a new supersede version)",
 			ArgsUsage: "<goal-id> <open|in_progress|done|archived>",
-			Action:    actionStatus,
+			Description: "Status transitions are immutable: a new entry version is created and\n" +
+				"the old one is marked superseded. Prints the new entry ID so you can\n" +
+				"chain commands.\n\n" +
+				"EXAMPLE:\n" +
+				"  workingbad status <goal-id> in_progress",
+			Action: actionStatus,
 		},
-		{Name: "pending", Usage: "count segments needing materialize", Action: actionPending},
 		{
-			Name:   "summarize",
-			Usage:  "materialise all pending segments (Phase 1: uses mock AIProvider)",
+			Name:  "pending",
+			Usage: "count git segments that have not yet been summarised into activity entries",
+			Description: "A segment is a window of related git commits. `summarize` turns each\n" +
+				"pending segment into one activity entry via the AIProvider. This command\n" +
+				"just reports the backlog size; it does not mutate state.\n\n" +
+				"EXAMPLE:\n" +
+				"  workingbad pending",
+			Action: actionPending,
+		},
+		{
+			Name:  "summarize",
+			Usage: "materialise every pending segment into an activity entry (Phase 1: mock AI)",
+			Description: "Runs BatchMaterialize over all pending segments, one independent tx\n" +
+				"per segment. Phase 1 ships the deterministic mock AIProvider; the real\n" +
+				"local (Ollama) / api (Claude) providers arrive in Phase 3 — see ROADMAP.\n\n" +
+				"EXAMPLE:\n" +
+				"  workingbad summarize",
 			Action: actionSummarize,
 		},
 	}
