@@ -10,10 +10,29 @@ import "time"
 type Config struct {
 	DB       DB                `koanf:"db" validate:"required"`
 	AI       AI                `koanf:"ai" validate:"required"`
+	Web      Web               `koanf:"web"`
 	Defaults Defaults          `koanf:"defaults"`
 	Sources  []ConnectorConfig `koanf:"sources" validate:"dive"`
 	Sinks    []ConnectorConfig `koanf:"sinks"   validate:"dive"`
 }
+
+// Web configures the localhost Web UI server. All defaults assume
+// single-user Phase 1 on a developer laptop; the listener is hard-bound
+// to 127.0.0.1 regardless of what users put here (ROADMAP web-security
+// invariant — DNS rebinding defence at the wire, not in middleware alone).
+type Web struct {
+	// Port the UI listens on. Default 7878 — picked to avoid common
+	// dev ports (3000/4000/5173/8000/8080).
+	Port int `koanf:"port" validate:"omitempty,min=1024,max=65535"`
+
+	// AllowedHosts is the additive Host-header allowlist beyond
+	// "localhost" / "127.0.0.1" / "[::1]" (which are always allowed).
+	// Engineers who reverse-proxy to a custom dev hostname add it here.
+	AllowedHosts []string `koanf:"allowed_hosts"`
+}
+
+// DefaultWebPort matches the ROADMAP "lightweight localhost UI" footprint.
+const DefaultWebPort = 7878
 
 // DB configures the embedded SQLite database.
 type DB struct {
@@ -88,5 +107,8 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Defaults.CoalesceWindow == 0 {
 		c.Defaults.CoalesceWindow = DefaultCoalesceWindow
+	}
+	if c.Web.Port == 0 {
+		c.Web.Port = DefaultWebPort
 	}
 }

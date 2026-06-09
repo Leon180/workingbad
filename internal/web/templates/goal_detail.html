@@ -1,0 +1,92 @@
+{{template "base" .}}
+{{define "content"}}
+{{$goal := .Goal}}
+{{$readOnly := .ReadOnly}}
+<p class="crumbs"><a href="/">← entries</a> · <a href="/entries/{{$goal.ID}}{{if .ActiveAt}}?at={{.ActiveAt}}{{end}}">history</a></p>
+
+{{if .AtParseErr}}
+<div class="banner error">at parse error: {{.AtParseErr}} — showing live goal</div>
+{{else if not .AsOf.IsZero}}
+<div class="banner timetravel">
+  ⏳ viewing this goal as of <strong>{{fmtTime .AsOf}}</strong> · mutations disabled
+  <a href="/goals/{{$goal.LogicalID}}" class="reset">back to live</a>
+</div>
+{{end}}
+
+<h1>{{$goal.Title}}</h1>
+
+<div class="detail-meta">
+  <span class="badge type-goal">goal</span>
+  <span class="badge status">{{$goal.Status}}</span>
+  <span>v{{$goal.Version}}</span>
+</div>
+
+{{if not $readOnly}}
+<form method="post" action="/goals/{{$goal.ID}}/status" class="inline-form">
+  <label>set status
+    <select name="status">
+      {{range $s := .StatusOptions}}
+        <option value="{{$s}}"{{if eq $s $goal.Status}} selected{{end}}>{{$s}}</option>
+      {{end}}
+    </select>
+  </label>
+  <button type="submit">change</button>
+</form>
+
+<form method="post" action="/goals/{{$goal.ID}}/attach" class="inline-form">
+  <label>attach entry
+    <input type="text" name="entry_id" placeholder="entry-id (uuid)" required>
+  </label>
+  <button type="submit">attach</button>
+</form>
+{{end}}
+
+{{if $goal.Body}}
+<section class="body">
+  <pre>{{$goal.Body}}</pre>
+</section>
+{{end}}
+
+<h2>attached activities ({{len .Attached}})</h2>
+{{if .Attached}}
+<table>
+  <thead>
+    <tr>
+      <th>occurred</th>
+      <th>title</th>
+      <th>v</th>
+      <th>id</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Attached}}
+    {{$a := .Activity}}
+    <tr>
+      <td class="time">{{fmtTime $a.OccurredAt}}</td>
+      <td><a href="/entries/{{$a.ID}}">{{$a.Title}}</a></td>
+      <td>v{{$a.Version}}</td>
+      <td class="id">{{$a.ID}}</td>
+      <td>
+        {{if and (not $readOnly) .EdgeID}}
+        <form method="post" action="/edges/{{.EdgeID}}/detach" class="inline-form">
+          <input type="hidden" name="goal_id" value="{{$goal.ID}}">
+          <button type="submit" class="danger">detach</button>
+        </form>
+        {{end}}
+      </td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="empty">No attached activities yet. Attach an entry id above or via CLI:</p>
+<pre>workingbad attach &lt;entry-id&gt; {{$goal.ID}}</pre>
+{{end}}
+
+<dl class="detail-kv">
+  <dt>logical id</dt><dd class="id">{{$goal.LogicalID}}</dd>
+  <dt>id</dt><dd class="id">{{$goal.ID}}</dd>
+  <dt>source</dt><dd>{{$goal.Source}}{{if $goal.SourceRef}} <span class="id">({{$goal.SourceRef}})</span>{{end}}</dd>
+</dl>
+{{end}}

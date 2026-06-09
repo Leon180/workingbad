@@ -38,7 +38,7 @@ func NewService(db *sql.DB) *Service {
 // plus its FTS5 mirror in one transaction.
 func (s *Service) InsertEntry(ctx context.Context, e domain.Entry) (domain.Entry, error) {
 	if err := validateEntry(e); err != nil {
-		return domain.Entry{}, err
+		return domain.Entry{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
 	if err := assignNewIDs(&e); err != nil {
 		return domain.Entry{}, err
@@ -82,6 +82,16 @@ func (s *Service) InsertEntry(ctx context.Context, e domain.Entry) (domain.Entry
 // concurrent sync workers (red team #1 in grill doc).
 var ErrVersionConflict = errors.New("repository: supersede version conflict")
 
+// ErrNotFound is the sentinel for "the row you asked for doesn't exist,
+// or isn't the current version anymore". Adapter layers (CLI, HTTP)
+// use errors.Is to map this to the right surface response (404 / exit code).
+// Avoids fragile string-matching on error messages.
+var ErrNotFound = errors.New("repository: not found")
+
+// ErrInvalidInput is the sentinel for caller-supplied data that fails
+// validation (bad status, bad type, etc.). Adapter layers map this to 400.
+var ErrInvalidInput = errors.New("repository: invalid input")
+
 // Supersede appends a new entry version that replaces oldID. The replacement
 // inherits LogicalID + OccurredAt from the old entry, the old entry is
 // marked superseded, FTS5 is updated, and every live edge touching oldID is
@@ -95,7 +105,7 @@ var ErrVersionConflict = errors.New("repository: supersede version conflict")
 // share the same supersede behaviour.
 func (s *Service) Supersede(ctx context.Context, oldID string, expectedVersion int, replacement domain.Entry) (domain.Entry, error) {
 	if err := validateEntry(replacement); err != nil {
-		return domain.Entry{}, err
+		return domain.Entry{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)

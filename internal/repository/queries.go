@@ -2,6 +2,8 @@ package repository
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -107,6 +109,25 @@ func (s *Service) CountPendingSegments(ctx context.Context, scope MaterializeSco
 		return 0, fmt.Errorf("repository: count pending: %w", err)
 	}
 	return n, nil
+}
+
+// GetEntryLogicalIDByID returns the logical_id for a given entry id (any
+// version in the supersede chain). Uses the entries PK lookup; bounded
+// regardless of total entry count.
+//
+// Returns ErrNotFound when the id doesn't exist — adapters can map cleanly
+// to 404 without scanning or substring-matching errors. Replaces the
+// pre-fix ListEntries(Limit=1000) scan-fallback in the Web layer's
+// resolveLogical helper, which silently 404'd at row 1001.
+func (s *Service) GetEntryLogicalIDByID(ctx context.Context, id string) (string, error) {
+	logical, err := s.q.GetEntryLogicalIDByID(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("repository: entry %q: %w", id, ErrNotFound)
+	}
+	if err != nil {
+		return "", fmt.Errorf("repository: lookup logical_id for %q: %w", id, err)
+	}
+	return logical, nil
 }
 
 // GetGoalActivities walks the goal's LogicalID chain so status edits stay
