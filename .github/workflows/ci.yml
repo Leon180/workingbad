@@ -5,6 +5,9 @@ on:
     branches: [ main ]
   pull_request:
 
+# Default-deny: every job below opts in to exactly what it needs. Prevents
+# a compromised action from elevating to write access via the default
+# GITHUB_TOKEN. Pattern: sigstore/cosign, caddyserver/caddy.
 permissions:
   contents: read
 
@@ -13,11 +16,17 @@ jobs:
     name: build / vet / test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # All third-party actions pinned to commit SHAs (not tags). Tag
+      # re-attribution attacks (e.g. tj-actions/changed-files Mar 2025)
+      # become impossible — a published tag CAN be moved, a 40-char SHA
+      # cannot. Version comment on the same line for human-readable
+      # bookkeeping; Dependabot updates both the SHA and the comment
+      # via its `update: pinned-version-comments` behavior.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0  # migration gates need full history for tag diffs
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           check-latest: true
@@ -33,23 +42,22 @@ jobs:
     name: golangci-lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: true
-      - uses: golangci/golangci-lint-action@v7
+      - uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7.0.0
         with:
-          # Must be built with Go ≥ 1.25 to match go.mod (validator dragged
-          # the toolchain up). action@v7 + v2.x of golangci-lint ships with
-          # Go 1.25; @v6 + `latest` resolves to v1.64.x (Go 1.24, fails).
+          # action@v7 + v2.x ships with Go 1.25 toolchain; @v6 + `latest`
+          # resolves to v1.64.x (Go 1.24, fails on our go.mod).
           version: v2.4.0
 
   migration-gates:
     name: migration discipline (3 gates)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
       - run: bash scripts/check-migration-gates.sh
@@ -58,9 +66,38 @@ jobs:
     name: sqlc drift check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: sqlc-dev/setup-sqlc@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: sqlc-dev/setup-sqlc@6bd2de0e87f5adfd968b55f140ce55461f71db69 # v4
         with:
           sqlc-version: '1.21.0'
       - name: verify generated sqlc code matches SQL
         run: sqlc diff
+
+  govulncheck:
+    name: govulncheck (Go stdlib + deps)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      # govulncheck is the Go-team's own scanner. False-positive rate is
+      # near zero (it walks the call graph to check whether vulnerable
+      # symbols are actually reachable), so any FAIL is real signal.
+      - name: install
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: scan
+        run: govulncheck ./...
+
+  dependency-review:
+    name: dependency review
+    # Only meaningful on PRs — main pushes have nothing to compare against.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: true
