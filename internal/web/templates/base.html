@@ -1,5 +1,7 @@
-{{define "base"}}<!doctype html>
+{{define "base"}}
+<!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,11 +9,13 @@
   <link rel="stylesheet" href="/static/app.css">
   {{/* htmx is loaded only when a later view actually uses it — base layout stays JS-free. */}}
 </head>
+
 <body>
   <header>
     <a href="/" class="brand">workingbad</a>
     <nav>
       <a href="/">entries</a>
+      <a href="/graph">graph</a>
       <span class="nav-sep">·</span>
       new:
       <a href="/new/research">research</a>
@@ -19,10 +23,12 @@
       <a href="/new/goal">goal</a>
     </nav>
     {{if .Header.PendingErr}}
-    <span class="pending-cta pending-err" title="pending segments count query failed — see server logs">? pending segments</span>
+    <span class="pending-cta pending-err" title="pending segments count query failed — see server logs">? pending
+      segments</span>
     {{else if gt .Header.PendingSegments 0}}
     <form method="post" action="/materialize" class="pending-cta">
-      <span class="pending-count">{{.Header.PendingSegments}} pending segment{{if ne .Header.PendingSegments 1}}s{{end}}</span>
+      <span class="pending-count">{{.Header.PendingSegments}} pending segment{{if ne .Header.PendingSegments
+        1}}s{{end}}</span>
       <button type="submit">materialize now</button>
     </form>
     {{end}}
@@ -34,5 +40,6 @@
     <span>local truth source · 127.0.0.1 only</span>
   </footer>
 </body>
+
 </html>
 {{end}}
