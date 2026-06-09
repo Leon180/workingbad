@@ -64,6 +64,8 @@
 **延後到後續 PR**(同 schema,不阻擋 v0.1.0 tag):
 - entry edit form(目前只能新增,不能改;CLI 也沒這個 — Phase 1 dedupe 模型下「supersede 改」概念較複雜,延後到使用上痛了再做)
 - goal 詳情頁顯示 supersede 歷史(目前只有 entry detail 有 chain table)
+- `EdgesAt` Web 視圖 / `GoalActivitiesAt` 時光機(目前只有 `ListEntriesAt`)
+- htmx 漸進式增強(目前是純 server-side render + form post)
 
 - **Exit 標準**:mock 資料跑完整 pipeline 全綠;Slice A 即達 dogfooding(能用 workingbad 管它自己的 decision/goal/note);Slice B 緊接交付;**v0.1.0 tag 凍結 migration 檔**;零外部依賴。
 
