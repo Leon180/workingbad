@@ -1,7 +1,17 @@
 {{template "base" .}}
 {{define "content"}}
 {{$goal := .Goal}}
-<p class="crumbs"><a href="/">← entries</a> · <a href="/entries/{{$goal.ID}}">history</a></p>
+{{$readOnly := .ReadOnly}}
+<p class="crumbs"><a href="/">← entries</a> · <a href="/entries/{{$goal.ID}}{{if .ActiveAt}}?at={{.ActiveAt}}{{end}}">history</a></p>
+
+{{if .AtParseErr}}
+<div class="banner error">at parse error: {{.AtParseErr}} — showing live goal</div>
+{{else if not .AsOf.IsZero}}
+<div class="banner timetravel">
+  ⏳ viewing this goal as of <strong>{{fmtTime .AsOf}}</strong> · mutations disabled
+  <a href="/goals/{{$goal.LogicalID}}" class="reset">back to live</a>
+</div>
+{{end}}
 
 <h1>{{$goal.Title}}</h1>
 
@@ -11,6 +21,7 @@
   <span>v{{$goal.Version}}</span>
 </div>
 
+{{if not $readOnly}}
 <form method="post" action="/goals/{{$goal.ID}}/status" class="inline-form">
   <label>set status
     <select name="status">
@@ -28,6 +39,7 @@
   </label>
   <button type="submit">attach</button>
 </form>
+{{end}}
 
 {{if $goal.Body}}
 <section class="body">
@@ -56,7 +68,7 @@
       <td>v{{$a.Version}}</td>
       <td class="id">{{$a.ID}}</td>
       <td>
-        {{if .EdgeID}}
+        {{if and (not $readOnly) .EdgeID}}
         <form method="post" action="/edges/{{.EdgeID}}/detach" class="inline-form">
           <input type="hidden" name="goal_id" value="{{$goal.ID}}">
           <button type="submit" class="danger">detach</button>

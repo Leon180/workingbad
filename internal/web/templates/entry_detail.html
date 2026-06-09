@@ -1,7 +1,17 @@
 {{template "base" .}}
 {{define "content"}}
 {{$live := .Live}}
+{{$focal := .FocalID}}
 <p class="crumbs"><a href="/">← entries</a></p>
+
+{{if .AtParseErr}}
+<div class="banner error">at parse error: {{.AtParseErr}} — showing live entry</div>
+{{else if not .AsOf.IsZero}}
+<div class="banner timetravel">
+  ⏳ viewing this entry as of <strong>{{fmtTime .AsOf}}</strong>
+  <a href="/entries/{{$live.LogicalID}}" class="reset">back to live</a>
+</div>
+{{end}}
 
 <h1>{{$live.Title}}</h1>
 
@@ -32,13 +42,17 @@
   </thead>
   <tbody>
     {{range .History}}
-    <tr{{if .IsCurrent}} class="current"{{end}}>
+    <tr{{if eq .ID $focal}} class="current"{{end}}>
       <td>v{{.Version}}</td>
       <td class="time">{{fmtTime .OccurredAt}}</td>
       <td class="time">{{fmtTime .IngestedAt}}</td>
       <td>{{.Title}}</td>
       <td class="id">{{.ID}}</td>
-      <td>{{if .IsCurrent}}current{{end}}</td>
+      <td>
+        {{- if eq .ID $focal -}}
+          {{if not $.AsOf.IsZero}}as of T{{else}}current{{end}}
+        {{- end -}}
+      </td>
     </tr>
     {{end}}
   </tbody>

@@ -16,6 +16,11 @@ import (
 // underneath shows every prior version with side-by-side occurred / ingested
 // timestamps — the bitemporal "git log <file>" equivalent.
 //
+// With ?at=<RFC3339>: the header switches to the version that was live at
+// that instant, and the chain table marks that row as the "as of T"
+// snapshot. The full history still renders (it's useful audit context),
+// just with the focal version shifted.
+//
 // Route: GET /entries/{id}
 // Resolves either an entry id (any version) or a logical_id directly —
 // engineers pasting either should work.
@@ -42,16 +47,40 @@ func (s *Server) handleEntryDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	atStr := r.URL.Query().Get("at")
+	asOf, asOfErr := parseAtParam(atStr)
+	focal := live
+	focalID := live.ID
+	if atStr != "" && asOfErr == nil {
+		// In time-travel mode the focal version is whichever entry was
+		// "live at asOf" — its ingested_at <= asOf and any successor
+		// arrived after asOf. liveAtAsOf does the walk on the already-
+		// loaded history (no extra SQL round-trip).
+		if v, ok := liveAtAsOf(history, asOf); ok {
+			focal = v
+			focalID = v.ID
+		}
+	}
+
 	s.renderPage(w, r, "entry_detail.html", entryDetailData{
-		Title:   "workingbad — " + live.Title,
-		Live:    live,
-		History: history,
+		Title:      "workingbad — " + focal.Title,
+		Live:       focal,
+		History:    history,
+		FocalID:    focalID,
+		ActiveAt:   atStr,
+		AsOf:       asOf,
+		AtParseErr: asOfErrString(atStr, asOfErr),
 	})
 }
 
-// handleGoalDetail renders the live goal plus its attached activities
-// (via repository.GetGoalActivities, which already walks the goal's
-// LogicalID chain so status changes don't break attachment).
+// handleGoalDetail renders the live goal plus its attached activities.
+//
+// Without ?at=: uses GetGoalActivities (walks the goal's LogicalID chain
+// so status changes don't break attachment).
+//
+// With ?at=<RFC3339>: uses GoalActivitiesAt(goalID, asOf) and shifts the
+// header to the goal version that was live at asOf. Mutation forms are
+// suppressed (ReadOnly = true) — you can't supersede the past.
 //
 // Route: GET /goals/{id}
 func (s *Server) handleGoalDetail(w http.ResponseWriter, r *http.Request) {
@@ -61,7 +90,7 @@ func (s *Server) handleGoalDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, live, err := s.resolveLogical(r.Context(), id)
+	logical, live, err := s.resolveLogical(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, errNotFound) {
 			http.NotFound(w, r)
@@ -75,28 +104,63 @@ func (s *Server) handleGoalDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	activities, err := s.svc.GetGoalActivities(r.Context(), live.ID)
+	atStr := r.URL.Query().Get("at")
+	asOf, asOfErr := parseAtParam(atStr)
+	timeTravel := atStr != "" && asOfErr == nil
+
+	// In time-travel mode, shift the focal goal version to whichever was
+	// live at asOf. We load the chain once and walk it in-memory; the
+	// header data + the GoalActivitiesAt call both key off the focal id.
+	focal := live
+	if timeTravel {
+		chain, herr := s.svc.EntryHistory(r.Context(), logical)
+		if herr != nil {
+			http.Error(w, fmt.Sprintf("repository: %v", herr), http.StatusInternalServerError)
+			return
+		}
+		if v, ok := liveAtAsOf(chain, asOf); ok && v.Type == domain.EntryTypeGoal {
+			focal = v
+		}
+	}
+
+	var activities []domain.Entry
+	if timeTravel {
+		activities, err = s.svc.GoalActivitiesAt(r.Context(), focal.ID, asOf)
+	} else {
+		activities, err = s.svc.GetGoalActivities(r.Context(), focal.ID)
+	}
 	if err != nil {
 		http.Error(w, fmt.Sprintf("repository: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	// Each attached activity comes with the edge id that links it, so the
-	// detail page can show a one-click detach button per row. The mock
-	// surface in GetGoalActivities returns entries only; we pair them here
-	// with the edges they sit on by querying edges live with from=activity
-	// to=any-version-of-goal.
-	attached, err := s.collectAttached(r.Context(), live, activities)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("repository: %v", err), http.StatusInternalServerError)
-		return
+	// detail page can show a one-click detach button per row in live mode.
+	// In time-travel mode collectAttached is skipped (no detach action
+	// available) so we avoid the EdgesAt round-trips entirely.
+	var attached []attachedActivity
+	if !timeTravel {
+		attached, err = s.collectAttached(r.Context(), focal, activities)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("repository: %v", err), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		attached = make([]attachedActivity, 0, len(activities))
+		for _, a := range activities {
+			attached = append(attached, attachedActivity{Activity: a})
+		}
 	}
 
 	s.renderPage(w, r, "goal_detail.html", goalDetailData{
-		Title:         "workingbad — " + live.Title,
-		Goal:          live,
+		Title:         "workingbad — " + focal.Title,
+		Goal:          focal,
 		Attached:      attached,
 		StatusOptions: goalStatusOptions,
+		ActiveAt:      atStr,
+		AsOf:          asOf,
+		AtParseErr:    asOfErrString(atStr, asOfErr),
+		ReadOnly:      timeTravel,
 	})
 }
 
@@ -141,9 +205,13 @@ func (s *Server) collectAttached(ctx context.Context, goal domain.Entry, activit
 }
 
 type entryDetailData struct {
-	Title   string
-	Live    domain.Entry
-	History []domain.Entry
+	Title      string
+	Live       domain.Entry // focal version (= "live at asOf" in time-travel mode, else the current row)
+	History    []domain.Entry
+	FocalID    string    // id of the focal row, so the chain table can highlight it
+	ActiveAt   string    // raw ?at= query value, echoed for forms / back-link
+	AsOf       time.Time // parsed asOf, zero = live mode
+	AtParseErr string    // empty when ActiveAt is "" or parsed OK
 }
 
 type goalDetailData struct {
@@ -151,6 +219,48 @@ type goalDetailData struct {
 	Goal          domain.Entry
 	Attached      []attachedActivity
 	StatusOptions []domain.Status
+	ActiveAt      string
+	AsOf          time.Time
+	AtParseErr    string
+	ReadOnly      bool // true in time-travel mode — mutation forms suppressed (can't edit the past)
+}
+
+// liveAtAsOf walks an EntryHistory chain (newest-first by version) and
+// returns the version that was current at the given asOf instant. Pure
+// in-memory predicate, no SQL — the caller already loaded the chain.
+//
+// Rule: an entry was current at asOf iff
+//   - ingested_at <= asOf  (it existed by then)
+//   - it has no successor OR the successor was ingested AFTER asOf (the
+//     supersede had not happened yet at asOf)
+//
+// Same logic as the supersede-chain walk in queries_temporal.go's
+// ListEntriesAt, just applied client-side to a known chain.
+func liveAtAsOf(history []domain.Entry, asOf time.Time) (domain.Entry, bool) {
+	for _, e := range history {
+		if e.IngestedAt.After(asOf) {
+			continue // didn't exist yet
+		}
+		if e.SupersededBy == "" {
+			return e, true // tail of chain that was alive at asOf
+		}
+		// Look ahead in the chain (history is version-DESC, so the
+		// successor lives at a lower index) — if it was ingested after
+		// asOf, this version was still live then.
+		successorAlive := false
+		for _, s := range history {
+			if s.ID == e.SupersededBy {
+				if s.IngestedAt.After(asOf) {
+					successorAlive = true
+				}
+				break
+			}
+		}
+		if successorAlive {
+			return e, true
+		}
+	}
+	return domain.Entry{}, false
 }
 
 // errNotFound is the sentinel resolveLogical returns when neither lookup
