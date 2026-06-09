@@ -33,6 +33,14 @@ func TestSafeRedirectPath_TruthTable(t *testing.T) {
 		{"127.0.0.1:7890", "https://attacker.test/", "/"},
 		{"127.0.0.1:7890", "//evil.example.com/", "/"},
 
+		// CodeQL go/bad-redirect-check: backslash-smuggled foreign host.
+		// "/\evil.com" passes a leading-slash check but Chrome/Edge
+		// normalise the backslash on the wire so the browser navigates
+		// to "//evil.com".
+		{"127.0.0.1:7890", `/\evil.example.com`, "/"},
+		{"127.0.0.1:7890", `/\\evil.example.com/foo`, "/"},
+		{"127.0.0.1:7890", `/\/evil.example.com`, "/"},
+
 		// Path traversal → fallback (closes the /etc/passwd path).
 		{"127.0.0.1:7890", "/../etc/passwd", "/"},
 		{"127.0.0.1:7890", "/goals/../../etc/passwd", "/"},
