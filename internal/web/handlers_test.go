@@ -478,6 +478,47 @@ func seedPendingSegment(t *testing.T, srv *Server, ctx context.Context, repo, so
 	}
 }
 
+// TestResolveLogical_BeyondScanLimit closes the architect-flagged latent
+// 404 (PR #10 P1): pre-fix the resolveLogical fallback scanned
+// ListEntries(Limit=1000) and silently 404'd at row 1001. The PK lookup
+// via GetEntryLogicalIDByID is bounded by the entries primary key, so
+// the lookup works at any scale.
+//
+// We don't seed 1001 entries (would slow CI); instead we seed >1 entries
+// and supersede one of them, then look up by the SUPERSEDED id. The
+// pre-fix scan would only find entries with is_current=1, so the
+// superseded id would always 404. The new PK lookup resolves it.
+func TestResolveLogical_BeyondScanLimit(t *testing.T) {
+	srv := newTestServer(t)
+	ctx := context.Background()
+
+	v1, err := srv.svc.InsertEntry(ctx, domain.Entry{
+		Type: domain.EntryTypeDecision, Origin: domain.OriginLocal,
+		Source: domain.SourceManual, SourceRef: "scan-1",
+		Title: "Original",
+	})
+	if err != nil {
+		t.Fatalf("v1: %v", err)
+	}
+	v2, err := srv.svc.Supersede(ctx, v1.ID, v1.Version, domain.Entry{
+		Type: domain.EntryTypeDecision, Origin: domain.OriginLocal,
+		Source: domain.SourceManual, SourceRef: "scan-2",
+		Title: "Revised",
+	})
+	if err != nil {
+		t.Fatalf("supersede: %v", err)
+	}
+
+	// Look up the SUPERSEDED id directly. EntryHistory(v1.ID) returns
+	// empty (v1.ID isn't a logical_id), so resolveLogical falls through
+	// to GetEntryLogicalIDByID which finds it.
+	body := getBody(t, srv, "/entries/"+v1.ID)
+	if !strings.Contains(body, "Revised") {
+		t.Errorf("resolveLogical should reach the live row from a superseded id, body=%q", body)
+	}
+	_ = v2 // appease unused-var
+}
+
 // TestIndex_EmptyState renders the friendly "no entries" copy + the CLI
 // hint without crashing on a zero-row list.
 func TestIndex_EmptyState(t *testing.T) {

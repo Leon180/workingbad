@@ -270,9 +270,11 @@ var errNotFound = errors.New("web: entry not found")
 
 // resolveLogical accepts either an entry id or a logical_id and returns
 // (logicalID, liveEntry). EntryHistory takes a logical_id by contract,
-// so we try that first; if it comes up empty we treat the input as an
-// entry id and discover the chain via a scan of ListEntries. Both fast
-// paths are O(history depth) which is bounded by supersede count.
+// so we try that first; if it comes up empty we look up the row by entry
+// id via GetEntryLogicalIDByID — an indexed PK lookup, bounded regardless
+// of total entry count. Pre-fix the fallback was a ListEntries scan
+// capped at 1000 rows which silently 404'd past that limit (architect
+// review #10 P1).
 func (s *Server) resolveLogical(ctx context.Context, id string) (string, domain.Entry, error) {
 	history, err := s.svc.EntryHistory(ctx, id)
 	if err != nil {
@@ -287,18 +289,25 @@ func (s *Server) resolveLogical(ctx context.Context, id string) (string, domain.
 		return history[0].LogicalID, history[0], nil
 	}
 
-	// Fallback: scan live entries for one with this id, then walk its chain.
-	// 1000 = the same hard cap parseLimit enforces. Acceptable for Phase 1
-	// row counts; a dedicated SQL lookup is a straightforward additive
-	// improvement when entry counts grow past this.
-	all, err := s.svc.ListEntries(ctx, repository.ListFilter{Limit: 1000})
+	// Treat input as an entry id and resolve to logical_id via PK lookup.
+	logical, err := s.svc.GetEntryLogicalIDByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return "", domain.Entry{}, errNotFound
+		}
+		return "", domain.Entry{}, err
+	}
+	chain, err := s.svc.EntryHistory(ctx, logical)
 	if err != nil {
 		return "", domain.Entry{}, err
 	}
-	for _, e := range all {
-		if e.ID == id {
-			return e.LogicalID, e, nil
+	for _, e := range chain {
+		if e.IsCurrent {
+			return logical, e, nil
 		}
+	}
+	if len(chain) > 0 {
+		return logical, chain[0], nil
 	}
 	return "", domain.Entry{}, errNotFound
 }

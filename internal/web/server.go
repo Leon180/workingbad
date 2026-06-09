@@ -62,9 +62,11 @@ type Server struct {
 // listener. It does NOT start serving — Serve does that. Splitting setup
 // from start lets tests grab the listener address before Run blocks.
 func NewServer(svc *repository.Service, cfg config.Web) (*Server, error) {
-	if cfg.Port == 0 {
-		cfg.Port = config.DefaultWebPort
-	}
+	// Port 0 is treated as "let the kernel pick an ephemeral port" so
+	// httptest-style callers get a free port without collision. The CLI
+	// entry point relies on config.applyDefaults to fill in the
+	// configured default (7878) before this is called, so production
+	// startup never sees 0 here.
 
 	tmpls, err := parseTemplates()
 	if err != nil {
