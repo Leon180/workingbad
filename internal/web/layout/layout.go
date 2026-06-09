@@ -28,8 +28,8 @@ import (
 type Lane struct {
 	Goal       *domain.Entry // nil for the orphan lane
 	Y          float64
-	ColorIndex int           // index into laneColours; rendered via CSS class lane-N
-	GoalX      float64       // X of the goal node (or right edge if orphan)
+	ColorIndex int     // index into laneColours; rendered via CSS class lane-N
+	GoalX      float64 // X of the goal node (or right edge if orphan)
 	GoalW      float64
 	GoalH      float64
 }
@@ -50,7 +50,7 @@ type Node struct {
 // the visual without semantic gain (the lane already says "these belong
 // to this goal").
 type EdgePath struct {
-	Edge        domain.Edge
+	Edge         domain.Edge
 	FromX, FromY float64
 	ToX, ToY     float64
 	MidX, MidY   float64
@@ -68,15 +68,15 @@ type Canvas struct {
 
 // Visual constants. Tuned to feel airy on a 1440-wide laptop browser.
 const (
-	LaneHeight    = 90.0  // vertical gap between lanes
-	DotRadius     = 9.0   // entry dot radius
-	GoalNodeW     = 180.0
-	GoalNodeH     = 56.0
-	MarginTop     = 60.0
-	MarginBottom  = 40.0
-	MarginLeft    = 180.0 // wide enough to fit the lane-name label
-	MarginRight   = 40.0
-	MinCanvasW    = 720.0
+	LaneHeight     = 90.0 // vertical gap between lanes
+	DotRadius      = 9.0  // entry dot radius
+	GoalNodeW      = 180.0
+	GoalNodeH      = 56.0
+	MarginTop      = 60.0
+	MarginBottom   = 40.0
+	MarginLeft     = 180.0 // wide enough to fit the lane-name label
+	MarginRight    = 40.0
+	MinCanvasW     = 720.0
 	NodeMinSpacing = 110.0 // minimum horizontal gap between adjacent dots in a lane
 )
 
@@ -304,10 +304,10 @@ func Build(entries []domain.Entry, edges []domain.Edge) Canvas {
 		midX := (fn.X + tn.X) / 2
 		midY := (fn.Y + tn.Y) / 2
 		if fn.LaneIndex == tn.LaneIndex {
-			// Same lane non-part_of edge — bow it above the lane line.
+			// Same lane non-part_of edge — bow it above the lane line so
+			// it doesn't slice through neighbours. Cross-lane edges use the
+			// natural midpoint already (no extra lift).
 			midY -= 24
-		} else {
-			// Cross-lane — bow it toward the midpoint already (no extra lift).
 		}
 		edgePaths = append(edgePaths, EdgePath{
 			Edge:  e,
