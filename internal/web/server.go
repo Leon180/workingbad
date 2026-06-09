@@ -33,6 +33,7 @@ import (
 
 	"github.com/Leon180/workingbad/internal/config"
 	"github.com/Leon180/workingbad/internal/repository"
+	"github.com/Leon180/workingbad/internal/web/layout"
 )
 
 //go:embed templates/*.html
@@ -86,6 +87,7 @@ func NewServer(svc *repository.Service, cfg config.Web) (*Server, error) {
 	}
 
 	s.mux.HandleFunc("GET /", s.handleIndex)
+	s.mux.HandleFunc("GET /graph", s.handleGraph)
 	s.mux.HandleFunc("GET /entries/{id}", s.handleEntryDetail)
 	s.mux.HandleFunc("GET /goals/{id}", s.handleGoalDetail)
 	s.mux.HandleFunc("GET /new/{type}", s.handleNewForm)
@@ -243,6 +245,30 @@ func parseTemplates() (map[string]*template.Template, error) {
 				return "-"
 			}
 			return t.UTC().Format(time.RFC3339)
+		},
+		// SVG arithmetic helpers — html/template can't do math on
+		// numeric values, so the graph template calls these for
+		// node-shape coordinate calculations.
+		"halfF":      func(f float64) float64 { return f / 2 },
+		"sixthF":     func(f float64) float64 { return f / 6 },
+		"fiveSixthF": func(f float64) float64 { return f * 5 / 6 },
+		"plusF":      func(a, b float64) float64 { return a + b },
+		"minusF":     func(a, b float64) float64 { return a - b },
+		"minHalf": func(a, b float64) float64 {
+			if a < b {
+				return a / 2
+			}
+			return b / 2
+		},
+		"index": func(i int, lanes []layout.Lane) layout.Lane {
+			return lanes[i]
+		},
+		"goalW": func(l layout.Lane) float64 { return l.GoalW },
+		"truncate": func(s string, n int) string {
+			if len(s) <= n {
+				return s
+			}
+			return s[:n-1] + "…"
 		},
 	}
 

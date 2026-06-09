@@ -49,6 +49,153 @@ header nav a:hover { text-decoration: underline; }
 }
 .pending-err { color: #c00; font-weight: bold; font-size: 0.9rem; cursor: help; }
 
+/* ── Graph view (git-style swim lanes, dark theme) ─────────────── */
+
+/* Type palette — distinct per entry type, NOT per lane.
+   Lane identity comes from the horizontal track colour; type identity
+   from the dot fill. Engineers see both at a glance. */
+:root {
+  --type-activity: #58a6ff; /* blue   */
+  --type-decision: #ff9f43; /* amber  — decisive */
+  --type-research: #56d364; /* green  — exploration */
+  --type-discuss:  #f47067; /* coral  */
+}
+
+.graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  margin: 1rem 0 0.5rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+  align-items: center;
+}
+.legend-item { display: inline-flex; align-items: center; gap: 0.4rem; }
+.legend-dot {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.5);
+}
+.legend-dot.activity { background: var(--type-activity); }
+.legend-dot.decision { background: var(--type-decision); }
+.legend-dot.research { background: var(--type-research); }
+.legend-dot.discuss  { background: var(--type-discuss); }
+.legend-sep { color: #444; }
+.legend-edge-blocks::before {
+  content: ""; display: inline-block; width: 22px; height: 0;
+  border-top: 2px dashed #ff6b6b; margin-right: 0.35rem; vertical-align: middle;
+}
+.legend-edge-other::before {
+  content: ""; display: inline-block; width: 22px; height: 0;
+  border-top: 1.5px dotted #888; margin-right: 0.35rem; vertical-align: middle;
+}
+
+.graph-frame {
+  margin: 1rem 0;
+  border: 1px solid #222;
+  border-radius: 6px;
+  background:
+    radial-gradient(circle at 1px 1px, rgba(255,255,255,0.04) 1px, transparent 0)
+    0 0 / 22px 22px,
+    linear-gradient(180deg, #0d1117 0%, #161b22 100%);
+  overflow: auto;
+}
+.graph-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 320px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* ─ lanes: horizontal "branch" tracks ─ */
+.lane-line {
+  stroke-width: 3;
+  stroke-linecap: round;
+  opacity: 0.75;
+}
+/* git-style branch palette, tuned for dark background */
+.lane-line.lane-0      { stroke: #58a6ff; } /* blue   */
+.lane-line.lane-1      { stroke: #3fb950; } /* green  */
+.lane-line.lane-2      { stroke: #ff9f43; } /* orange */
+.lane-line.lane-3      { stroke: #a371f7; } /* purple */
+.lane-line.lane-4      { stroke: #2ec4b6; } /* teal   */
+.lane-line.lane-5      { stroke: #ff7eb6; } /* pink   */
+.lane-line.lane-orphan { stroke: #5a5a5a; stroke-dasharray: 6 5; opacity: 0.5; }
+
+/* lane-name labels on the LEFT (the "task name" anchor) */
+.lane-label {
+  font-size: 12px;
+  font-weight: 600;
+  fill: #c9d1d9;
+}
+.lane-label-0 { fill: #79c0ff; }
+.lane-label-1 { fill: #56d364; }
+.lane-label-2 { fill: #ffb86b; }
+.lane-label-3 { fill: #b794f6; }
+.lane-label-4 { fill: #4dd0c5; }
+.lane-label-5 { fill: #ff9fc6; }
+.lane-label-orphan { fill: #777; font-style: italic; font-weight: normal; }
+
+/* ─ nodes ─ */
+.node { cursor: pointer; }
+/* Hover effect without translate/scale (those caused jitter on SVG <g>).
+   We just brighten the dot via stroke + filter. */
+.node:hover .dot { stroke: #fff; stroke-width: 3.5; }
+.node:hover .goal-shape { stroke: #fff; stroke-width: 2.5; }
+.node:hover .dot-label { fill: #fff; font-weight: 600; }
+
+/* dots — base ring is lane colour; FILL is the entry type */
+.dot {
+  stroke-width: 2.5;
+  fill: #161b22; /* dark fill = "hollow ring" by default */
+}
+.lane-0 .dot { stroke: #58a6ff; }
+.lane-1 .dot { stroke: #3fb950; }
+.lane-2 .dot { stroke: #ff9f43; }
+.lane-3 .dot { stroke: #a371f7; }
+.lane-4 .dot { stroke: #2ec4b6; }
+.lane-5 .dot { stroke: #ff7eb6; }
+.lane-orphan .dot { stroke: #6a6a6a; }
+
+/* Type colour OVERRIDES the hollow fill. The ring (stroke) still
+   tells you which lane this entry belongs to. */
+.dot.type-activity { fill: var(--type-activity); }
+.dot.type-decision { fill: var(--type-decision); }
+.dot.type-research { fill: var(--type-research); }
+.dot.type-discuss  { fill: var(--type-discuss); }
+
+.dot-label {
+  font-size: 10.5px;
+  fill: #c9d1d9;
+  pointer-events: none;
+}
+
+/* ─ goal anchors at the right end of each lane ─ */
+.node-goal .goal-shape { stroke-width: 2; fill: #161b22; }
+.node-goal.lane-0 .goal-shape { stroke: #58a6ff; fill: #0d1f33; }
+.node-goal.lane-1 .goal-shape { stroke: #3fb950; fill: #0d2616; }
+.node-goal.lane-2 .goal-shape { stroke: #ff9f43; fill: #2a1d0d; }
+.node-goal.lane-3 .goal-shape { stroke: #a371f7; fill: #1d0f33; }
+.node-goal.lane-4 .goal-shape { stroke: #2ec4b6; fill: #0d2422; }
+.node-goal.lane-5 .goal-shape { stroke: #ff7eb6; fill: #2a0d1c; }
+.goal-label { font-size: 13px; font-weight: 600; fill: #e6edf3; pointer-events: none; }
+.goal-status { font-size: 10.5px; fill: #8b949e; font-style: italic; pointer-events: none; }
+
+/* ─ cross-lane edges ─ */
+.edge {
+  fill: none;
+  stroke-linecap: round;
+  transition: stroke-width 120ms ease, opacity 120ms ease;
+}
+.edge-blocks       { stroke: #ff6b6b; stroke-width: 2; stroke-dasharray: 7 4; }
+.edge-relates_to   { stroke: #6a6a6a; stroke-width: 1.3; stroke-dasharray: 4 4; opacity: 0.5; }
+.edge-derived_from { stroke: #8b949e; stroke-width: 1.5; opacity: 0.65; }
+.edge-iteration_of { stroke: #5a5a5a; stroke-width: 1.3; stroke-dasharray: 2 4; opacity: 0.5; }
+.edges .edge:hover { opacity: 1; stroke-width: 3; }
+
 main { padding: 2rem; max-width: 80rem; margin: 0 auto; }
 footer {
   padding: 1rem 2rem;
