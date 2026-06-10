@@ -84,6 +84,21 @@ func (q *Queries) GetEntryByLogicalIDAndHash(ctx context.Context, arg GetEntryBy
 	return id, err
 }
 
+const getEntryLogicalIDByID = `-- name: GetEntryLogicalIDByID :one
+SELECT logical_id FROM entries WHERE id = ?
+`
+
+// Cheap targeted lookup for the Web UI's resolveLogical fallback path.
+// Pre-fix the handler scanned ListEntries(Limit=1000) and silently 404'd
+// past row 1000 (architect review #10 P1, hunter P1). This replaces the
+// scan with an indexed PK lookup.
+func (q *Queries) GetEntryLogicalIDByID(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getEntryLogicalIDByID, id)
+	var logical_id string
+	err := row.Scan(&logical_id)
+	return logical_id, err
+}
+
 const getEntryTypeAndCurrent = `-- name: GetEntryTypeAndCurrent :one
 SELECT type, is_current FROM entries WHERE id = ?
 `

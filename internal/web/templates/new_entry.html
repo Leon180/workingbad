@@ -1,0 +1,29 @@
+{{template "base" .}}
+{{define "content"}}
+<p class="crumbs"><a href="/">← entries</a></p>
+
+<h1>new {{.Type}}</h1>
+
+{{if .FormErr}}
+<div class="banner error">{{.FormErr}}</div>
+{{end}}
+
+<form method="post" action="/new/{{.Type}}" class="create-form">
+  <label>
+    title <span class="required">*</span>
+    <input type="text" name="title" value="{{.TitleIn}}" required autofocus>
+  </label>
+  <label>
+    body
+    <textarea name="body" rows="8">{{.Body}}</textarea>
+  </label>
+  <div class="form-actions">
+    <button type="submit">create {{.Type}}</button>
+    <a href="/" class="cancel">cancel</a>
+  </div>
+</form>
+
+<p class="meta">
+  manual {{.Type}} entries are dedupe-keyed by sha256(type, title, body) — re-submitting the exact same content is a no-op.
+</p>
+{{end}}

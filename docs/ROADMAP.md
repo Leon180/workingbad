@@ -55,12 +55,38 @@
 
 - **Exit 標準**(grill doc §6):能在 CLI 復現任一時刻 entry/edge/goal 狀態;re-summarize 後 occurred_at 不漂移;supersede 並發測試後者拿 ErrVersionConflict;EXPLAIN QUERY PLAN golden 覆蓋 6 個查詢;本決策入庫為 decision Entry。
 
-**Slice B(Web,緊接 A.5,同 Phase 內)**
-- [ ] Web UI:列表全 5 type(WHERE is_current=1, **零 graph**) + 計數提示列(免 LLM COUNT) + 手動建/編輯表單 + goal 詳情扁平 `part_of` 列表(沿 iteration_of 聚合)
-- [ ] Web 安全(不可逆即設):**127.0.0.1 binding + Host allowlist middleware(防 DNS rebinding)+ GET/POST 動詞分離 + `http.CrossOriginProtection`**;CSRF token/local token auth 留 mutationGuard chain seam additive(single-user 假設下暫不上)
-- [ ] CLI / HTTP 共用同一 repository service;adapter 薄整合測
+**Slice B(Web,緊接 A.5,同 Phase 內)** — landed as PR #N (feature/slice-b-web-ui)
+- [x] Web UI:列表 5 type(零 graph) + type 篩選 + 時間旅行 `?at=<RFC3339>` + 計數提示列 + 手動建表單(research/decision/goal) + goal 詳情扁平 `part_of` 列表;entry detail 頁顯示 supersede chain(bitemporal "git log" 等價)
+- [x] Web 安全:**127.0.0.1 listener-level binding + Host allowlist middleware + GET/POST 動詞分離 + `http.CrossOriginProtection`**;`mutationGuard` chain seam 留 additive(single-user 假設下暫不上 CSRF token / local token auth)
+- [x] CLI / HTTP 共用同一 `RepositoryService`;httptest E2E journey 覆蓋:create goal → seed segment → materialize → attach activity → status done → bitemporal 時光機驗證 v1 仍可見
+- [x] 40 web tests / 150 total green;`workingbad serve` CLI subcommand;templates + static assets via `embed.FS`(單一 binary 維持)
+
+**延後到後續 PR**(同 schema,不阻擋 v0.1.0 tag):
+- entry edit form(目前只能新增,不能改;CLI 也沒這個 — Phase 1 dedupe 模型下「supersede 改」概念較複雜,延後到使用上痛了再做)
+- goal 詳情頁顯示 supersede 歷史(目前只有 entry detail 有 chain table)
+- `EdgesAt` Web 視圖 / `GoalActivitiesAt` 時光機(目前只有 `ListEntriesAt`)
+- htmx 漸進式增強(目前是純 server-side render + form post)
 
 - **Exit 標準**:mock 資料跑完整 pipeline 全綠;Slice A 即達 dogfooding(能用 workingbad 管它自己的 decision/goal/note);Slice B 緊接交付;**v0.1.0 tag 凍結 migration 檔**;零外部依賴。
+
+**Slice C(Graph UI,Slice B merge 後,同 Phase 內,v0.1.0 tag 前可選)**
+
+完整 grill 記錄見 [docs/grill/2026-06-09-graph-ui.md](grill/2026-06-09-graph-ui.md)(3 輪 multi-agent:search prior art / architect 純 SVG 可行性 / ui-ux 工作流與美學)。設計鎖路線:純 SVG + Go template + htmx,**0 JS framework**;git-style swim lane(每個 goal 一條水平 lane,類型用點色,lane 用 stroke 色);bitemporal `?at=` 直接複用 Slice B query。
+
+**已完成 PR**:
+- [x] (PR #11 base) layout package(Sugiyama 風 swim-lane,8 tests)+ `/graph` route + SVG template + dark theme;218 tests 全綠
+
+**Follow-up issues**(各自獨立 PR,獨立可 merge):
+- [ ] pan/zoom(滑鼠滾輪 + 拖拉,~30 行 vanilla JS,不算 framework)
+- [ ] htmx 側欄 detail panel(click 節點 swap 詳情,不跳新頁)
+- [ ] hover tooltip preview(目前只有 native SVG `<title>`)
+- [ ] cross-lane edge filter toggle(預設只顯示 part_of 隱含 + blocks,其他關係 toggle)
+- [ ] 搜尋 highlight(輸入關鍵字非匹配節點淡出)
+- [ ] 真實時間軸刻度(目前是 occurred_at evenly spread,沒有 tick mark)
+- [ ] 多 part_of 的 entry 視覺化(目前只屬一條 lane,alphabetical 取最小)
+- [ ] N > 500 規模:barycenter ordering 降 edge crossing
+
+**永不做**(grill doc §7):drag-reposition、節點內 body preview、4 種以上顏色同時主圖、3D。
 
 ### Phase 2 — Sinks & 同步
 - [ ] `Sink` interface + 同步引擎（可自定義 mapping、idempotent）

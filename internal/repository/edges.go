@@ -106,7 +106,7 @@ func (s *Service) DetachFromGoal(ctx context.Context, edgeID string) error {
 		return fmt.Errorf("repository: detach: %w", err)
 	}
 	if n == 0 {
-		return fmt.Errorf("repository: edge %q not found or already detached", edgeID)
+		return fmt.Errorf("repository: edge %q not found or already detached: %w", edgeID, ErrNotFound)
 	}
 	return nil
 }
@@ -117,7 +117,7 @@ func (s *Service) SetGoalStatus(ctx context.Context, goalID string, newStatus do
 	switch newStatus {
 	case domain.StatusOpen, domain.StatusInProgress, domain.StatusDone, domain.StatusArchived:
 	default:
-		return domain.Entry{}, fmt.Errorf("repository: invalid goal status %q", newStatus)
+		return domain.Entry{}, fmt.Errorf("repository: invalid goal status %q: %w", newStatus, ErrInvalidInput)
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -129,7 +129,7 @@ func (s *Service) SetGoalStatus(ctx context.Context, goalID string, newStatus do
 
 	old, err := qtx.GetEntryByID(ctx, goalID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return domain.Entry{}, fmt.Errorf("repository: goal %q not found", goalID)
+		return domain.Entry{}, fmt.Errorf("repository: goal %q not found: %w", goalID, ErrNotFound)
 	}
 	if err != nil {
 		return domain.Entry{}, err
@@ -139,10 +139,10 @@ func (s *Service) SetGoalStatus(ctx context.Context, goalID string, newStatus do
 		return domain.Entry{}, err
 	}
 	if current.Type != domain.EntryTypeGoal {
-		return domain.Entry{}, fmt.Errorf("repository: entry %q is not a goal (type=%s)", goalID, current.Type)
+		return domain.Entry{}, fmt.Errorf("repository: entry %q is not a goal (type=%s): %w", goalID, current.Type, ErrInvalidInput)
 	}
 	if !current.IsCurrent {
-		return domain.Entry{}, fmt.Errorf("repository: goal %q is not current", goalID)
+		return domain.Entry{}, fmt.Errorf("repository: goal %q is not current: %w", goalID, ErrNotFound)
 	}
 
 	replacement := current
@@ -151,7 +151,7 @@ func (s *Service) SetGoalStatus(ctx context.Context, goalID string, newStatus do
 	replacement.Status = newStatus
 
 	if err := validateEntry(replacement); err != nil {
-		return domain.Entry{}, err
+		return domain.Entry{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
 	// supersedeEntryInTx now handles edge re-pointing in both directions for
 	// every supersede path (round 6 contract); no explicit rePoint call
@@ -171,13 +171,13 @@ func (s *Service) SetGoalStatus(ctx context.Context, goalID string, newStatus do
 func assertLive(ctx context.Context, qtx *sqlcdb.Queries, id, wantType string) error {
 	row, err := qtx.GetEntryTypeAndCurrent(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("entry %q not found", id)
+		return fmt.Errorf("entry %q not found: %w", id, ErrNotFound)
 	}
 	if err != nil {
 		return err
 	}
 	if row.IsCurrent != 1 {
-		return fmt.Errorf("entry %q is not current", id)
+		return fmt.Errorf("entry %q is not current: %w", id, ErrNotFound)
 	}
 	if wantType != "" && row.Type != wantType {
 		return fmt.Errorf("entry %q has type %q, want %q", id, row.Type, wantType)
