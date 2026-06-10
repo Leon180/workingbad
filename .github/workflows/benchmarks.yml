@@ -1,0 +1,166 @@
+name: Benchmarks
+
+# Issue #28: catch perf regressions before merge.
+#
+# Strategy:
+# - On every push to main: run benchmarks, upload result as artifact
+#   `bench-main` (overwrites previous main result).
+# - On every PR: download the latest main artifact, run benchmarks on the
+#   PR head, compare via benchstat. Fail the check if any benchmark
+#   regresses > 5% with statistical significance (p < 0.05).
+#
+# First-PR-ever bootstrap: when no main artifact exists yet the PR job
+# just records its result without comparison. The next main push seeds
+# the baseline.
+#
+# See docs/PERF.md for the local workflow and the reference numbers we
+# don't want to regress past.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  bench:
+    name: bench (run + upload)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: install benchstat
+        run: go install golang.org/x/perf/cmd/benchstat@latest
+
+      - name: run benchmarks (10 samples each)
+        # -count=10 gives benchstat enough samples for a t-test.
+        # -benchtime=2s caps wall time per benchmark; the M5-vs-GHA-runner
+        # delta means we tune wall time, not iteration count, to keep CI
+        # under ~10min.
+        # -run=^$ skips Test* functions (we only want bench data here;
+        # the regular test job covers correctness).
+        run: |
+          go test \
+            -bench=. \
+            -benchmem \
+            -benchtime=2s \
+            -count=10 \
+            -run=^$ \
+            ./internal/repository/ \
+            ./internal/web/ \
+            ./internal/web/layout/ \
+            > bench.txt 2>&1
+
+      - name: upload result as artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ github.event_name == 'push' && 'bench-main' || format('bench-pr-{0}', github.event.pull_request.number) }}
+          path: bench.txt
+          # 30 days is enough — main artifact gets overwritten weekly anyway,
+          # and PR artifacts are rarely useful past merge.
+          retention-days: 30
+
+      - name: print result to log (always)
+        run: cat bench.txt
+
+  regression-check:
+    name: "bench: regression check"
+    needs: bench
+    # Compare only on PRs; main pushes ARE the baseline so there's nothing
+    # to compare against.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: install benchstat
+        run: go install golang.org/x/perf/cmd/benchstat@latest
+
+      - name: download PR benchmark result
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: bench-pr-${{ github.event.pull_request.number }}
+          path: ./pr
+
+      - name: try to download main baseline from latest main run
+        id: baseline
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: bench-main
+          path: ./main
+          # When this repo has never had a main run yet, download fails
+          # and continue-on-error keeps the workflow alive. The compare
+          # step then short-circuits to "no baseline yet".
+          run-id: ${{ github.event.repository.default_branch && github.event.before || '' }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      - name: also try downloading main baseline by name across repo workflows
+        if: steps.baseline.outcome == 'failure'
+        id: baseline-fallback
+        run: |
+          # The artifact API only finds artifacts in the same workflow run
+          # by default. Use the GitHub API to find the latest bench-main
+          # artifact across all runs of this workflow on main.
+          set -euo pipefail
+          ARTIFACT_URL=$(gh api \
+            "/repos/${{ github.repository }}/actions/artifacts?name=bench-main&per_page=1" \
+            --jq '.artifacts[0].archive_download_url // empty')
+          if [ -z "$ARTIFACT_URL" ]; then
+            echo "no main baseline artifact found — first PR ever, or main hasn't run yet"
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mkdir -p ./main
+          gh api "$ARTIFACT_URL" > ./main/bench.zip
+          unzip -o ./main/bench.zip -d ./main
+          echo "found=true" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: benchstat compare
+        if: steps.baseline.outcome == 'success' || steps.baseline-fallback.outputs.found == 'true'
+        run: |
+          set -euo pipefail
+          benchstat ./main/bench.txt ./pr/bench.txt | tee /tmp/diff.txt
+          # benchstat's "ok" output has no rows with significance > p=0.05;
+          # any "geomean" delta worse than +5% is a regression.
+          # The standard parse: count lines containing "+N%" where N>=5
+          # AND p-value < 0.05.
+          if awk '
+            /^geomean/ { next }
+            $0 ~ /[[:space:]]\+[0-9]+(\.[0-9]+)?%/ {
+              # Extract delta
+              for (i = 1; i <= NF; i++) {
+                if ($i ~ /^\+[0-9]/) {
+                  d = $i + 0
+                  if (d > 5) { print "REGRESSION: " $0; exit 1 }
+                }
+              }
+            }
+          ' /tmp/diff.txt; then
+            echo "OK — no significant regressions > 5%"
+          else
+            echo "FAIL — one or more benchmarks regressed > 5%"
+            exit 1
+          fi
+
+      - name: no baseline yet (bootstrap)
+        if: steps.baseline.outcome == 'failure' && steps.baseline-fallback.outputs.found != 'true'
+        run: |
+          echo "::notice::No main baseline artifact yet. This run records the first one."
+          echo "Compare will activate on the next PR after this one merges."
+          cat ./pr/bench.txt
