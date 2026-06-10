@@ -1,0 +1,59 @@
+name: Load test (vegeta)
+
+# Issue #30: constant-rate Vegeta scenarios against a temp serve.
+# workflow_dispatch only — too slow for every-PR runs, valuable as
+# an on-demand check before merging anything that touches the request
+# path or the repository hot queries.
+
+on:
+  workflow_dispatch:
+    inputs:
+      p99_read_ms:
+        description: 'p99 gate for the read-heavy scenario (ms)'
+        required: false
+        default: '200'
+        type: string
+      p99_graph_ms:
+        description: 'p99 gate for the graph scenario (ms)'
+        required: false
+        default: '500'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  load-test:
+    name: "load-test: vegeta 4 scenarios"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: install vegeta
+        run: go install github.com/tsenart/vegeta/v12@latest
+
+      - name: build workingbad
+        run: make build
+
+      - name: run load test
+        env:
+          P99_READ_MS: ${{ inputs.p99_read_ms }}
+          P99_GRAPH_MS: ${{ inputs.p99_graph_ms }}
+        run: |
+          export PATH="$HOME/go/bin:$PATH"
+          bash scripts/load-test/run.sh
+
+      - name: upload result JSON
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: load-test-${{ github.run_id }}
+          path: |
+            /tmp/workingbad-loadtest/*.json
+            /tmp/workingbad-loadtest/server.log
+          retention-days: 30
