@@ -421,6 +421,464 @@ header nav a:hover {
   stroke-width: 3;
 }
 
+/* ─ graph layout: timeline + side detail panel sit side by side ─ */
+.graph-layout {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.graph-layout .tl-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── pinned timeline (graph-ui v2) ──────────────────────────────────
+   Plurk-style: lane titles pin left, goal anchors pin right, the middle
+   scrolls horizontally along a real occurred_at axis. The canvas is the
+   dark world in BOTH themes. tl-wrap is the positioning context for the
+   pinned overlays, the zoom control, and the hover tooltip. */
+.tl-wrap {
+  position: relative;
+  border: 1px solid #222;
+  border-radius: 6px;
+  overflow: hidden;
+  margin: 1rem 0;
+}
+
+.tl-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  background:
+    radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.04) 1px, transparent 0) 0 0 / 22px 22px,
+    linear-gradient(180deg, #0d1117 0%, #161b22 100%);
+}
+
+.tl-scroll .graph-svg {
+  display: block;
+  /* width/height come from the svg's own attributes (1 user unit = 1px) so
+     the content scrolls instead of scaling — zoom changes time density. */
+}
+
+/* pinned columns float over the scrolling canvas with a protection-gradient
+   fade so dots slide under them cleanly instead of hard-clipping. */
+.tl-titles,
+.tl-goals {
+  position: absolute;
+  top: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.tl-titles {
+  left: 0;
+  background: linear-gradient(90deg, #161b22 62%, rgba(22, 27, 34, 0));
+}
+
+.tl-goals {
+  right: 0;
+  background: linear-gradient(270deg, #161b22 62%, rgba(22, 27, 34, 0));
+}
+
+.tl-title {
+  position: absolute;
+  right: 10px;
+  text-align: right;
+  font-size: 12px;
+  font-weight: 600;
+  color: #c9d1d9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 150px;
+}
+
+.tl-title.lane-label-orphan {
+  color: #777;
+  font-style: italic;
+  font-weight: normal;
+}
+
+/* goal anchors as HTML boxes — reuse the lane stroke colours + status border
+   treatments from the SVG goals (status = border style, never fill colour). */
+.tl-goal {
+  position: absolute;
+  left: 12px;
+  right: 8px;
+  height: 56px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 12px;
+  border: 2px solid #6a6a6a;
+  border-radius: 10px;
+  background: #161b22;
+  color: #e6edf3;
+  text-decoration: none;
+  pointer-events: auto;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+.tl-goal:hover {
+  text-decoration: none;
+  border-color: #fff;
+}
+
+.tl-goal-title {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tl-goal-status {
+  font-size: 10.5px;
+  font-style: italic;
+  color: #8b949e;
+}
+
+.tl-goal.lane-0 { border-color: #58a6ff; background: #0d1f33; }
+.tl-goal.lane-1 { border-color: #3fb950; background: #0d2616; }
+.tl-goal.lane-2 { border-color: #ff9f43; background: #2a1d0d; }
+.tl-goal.lane-3 { border-color: #a371f7; background: #1d0f33; }
+.tl-goal.lane-4 { border-color: #2ec4b6; background: #0d2422; }
+.tl-goal.lane-5 { border-color: #ff7eb6; background: #2a0d1c; }
+
+.tl-goal.status-open { border-style: dashed; }
+.tl-goal.status-in_progress { box-shadow: 0 0 6px rgba(255, 255, 255, 0.3); }
+.tl-goal.status-done { opacity: 0.62; }
+.tl-goal.status-archived { opacity: 0.4; }
+
+.tl-goal.dimmed { opacity: 0.14; }
+.tl-goal.selected { border-color: #fff; box-shadow: 0 0 0 1px #fff; }
+
+/* time-density zoom control — overlaid top-right of the canvas */
+.graph-zoom {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  background: rgba(13, 17, 23, 0.85);
+  border: 1px solid #30363d;
+  border-radius: 6px;
+}
+
+.graph-zoom button {
+  background: #21262d;
+  color: #c9d1d9;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.9rem;
+  line-height: 1;
+  padding: 0.25rem 0.5rem;
+}
+
+.graph-zoom button:hover {
+  background: #30363d;
+  color: #fff;
+}
+
+.graph-zoom #graph-zoom-pct {
+  color: #8b949e;
+  font-size: 0.72rem;
+  min-width: 3.2rem;
+  text-align: center;
+}
+
+/* client-side graph controls (search + edge toggles) — JS reveals this */
+.graph-controls label.row {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+/* ─ goal status via border treatment, not colour (grill §3.3) ─ */
+.goal-shape.status-open {
+  stroke-dasharray: 7 5;
+}
+
+.goal-shape.status-in_progress {
+  filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.28));
+}
+
+.goal-shape.status-done {
+  fill-opacity: 0.4;
+  stroke-opacity: 0.7;
+}
+
+.node-goal.status-archived {
+  opacity: 0.45;
+}
+
+/* ─ search fade + click selection ─ */
+.node.dimmed {
+  opacity: 0.14;
+}
+
+.edge.dimmed {
+  opacity: 0.08;
+}
+
+.node.selected .dot,
+.node.selected .goal-shape {
+  stroke: #fff;
+  stroke-width: 3.5;
+}
+
+.node.selected .dot-label {
+  fill: #fff;
+  font-weight: 600;
+}
+
+/* ─ quiet occurred_at time axis ─ */
+.axis-line {
+  stroke: #30363d;
+  stroke-width: 1;
+}
+
+.axis-tick {
+  font-size: 10px;
+  fill: #8b949e;
+}
+
+/* ─ hover-only labels: declutter the canvas, reveal wording on demand ─ */
+.graph-svg.labels-hover .dot-label {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.graph-svg.labels-hover .node:hover .dot-label,
+.graph-svg.labels-hover .node.selected .dot-label,
+.graph-svg.labels-hover .node.matched .dot-label {
+  opacity: 1;
+}
+
+/* ─ rich hover tooltip (detail-on-demand, GitLens-style) ─ */
+.graph-tooltip {
+  position: absolute;
+  pointer-events: none;
+  background: #1c2128;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 8px 11px;
+  max-width: 270px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: #c9d1d9;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
+  z-index: 10;
+}
+
+.graph-tooltip .tt-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.graph-tooltip .tt-type {
+  color: #8b949e;
+  font-size: 10px;
+}
+
+.graph-tooltip .tt-title {
+  color: #e6edf3;
+  font-weight: 600;
+}
+
+.graph-tooltip .tt-meta {
+  color: #8b949e;
+  font-size: 10px;
+}
+
+.graph-tooltip .tt-body {
+  margin-top: 4px;
+  color: #c9d1d9;
+  opacity: 0.8;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.graph-tooltip .tt-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.45);
+  flex: none;
+}
+
+/* ─ graph interaction hint ─ */
+.graph-hint {
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin: 0.25rem 0 0;
+}
+
+/* ─ detail side panel (dark, click-to-inspect, no page jump) ─ */
+.graph-panel {
+  width: 300px;
+  flex: none;
+  background: #161b22;
+  border: 1px solid #222;
+  border-radius: 6px;
+  color: #c9d1d9;
+  padding: 14px 16px;
+  font-size: 0.85rem;
+  margin: 1rem 0;
+}
+
+.graph-panel .gp-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+
+.graph-panel .gp-type {
+  font-size: 0.78rem;
+  color: #8b949e;
+}
+
+.graph-panel .gp-close {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: #8b949e;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 1rem;
+  padding: 0 0.25rem;
+}
+
+.graph-panel .gp-close:hover {
+  color: #fff;
+}
+
+.graph-panel .gp-goalmark {
+  display: inline-block;
+  width: 16px;
+  height: 11px;
+  border-radius: 3px;
+  border: 1.5px solid #58a6ff;
+  background: #0d1f33;
+}
+
+.graph-panel h3 {
+  margin: 0 0 0.35rem;
+  font-size: 0.95rem;
+  color: #e6edf3;
+}
+
+.graph-panel .gp-status {
+  font-style: italic;
+  color: #8b949e;
+  font-size: 0.78rem;
+  margin-bottom: 0.6rem;
+}
+
+.graph-panel pre {
+  background: #0d1117;
+  border: 1px solid #222;
+  color: #c9d1d9;
+  font-size: 0.78rem;
+  border-radius: 3px;
+  padding: 0.5rem;
+  margin: 0 0 0.6rem;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.graph-panel .gp-kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 12px;
+  font-size: 0.72rem;
+  margin: 0 0 0.7rem;
+}
+
+.graph-panel .gp-kv dt {
+  color: #8b949e;
+}
+
+.graph-panel .gp-kv dd {
+  margin: 0;
+  white-space: nowrap;
+}
+
+.graph-panel .gp-open {
+  font-size: 0.8rem;
+  color: #58a6ff;
+}
+
+/* ─ action-feedback toasts (dark, bottom-right, auto-dismiss) ─ */
+.toast-stack {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  z-index: 100;
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  color: #c9d1d9;
+  font-size: 0.85rem;
+  padding: 0.55rem 0.9rem;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+}
+
+.toast .toast-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.toast.success .toast-dot {
+  background: #56d364;
+}
+
+.toast.error .toast-dot {
+  background: #ff6b6b;
+}
+
+.toast.info .toast-dot {
+  background: #58a6ff;
+}
+
+.toast .toast-close {
+  background: none;
+  border: none;
+  color: #8b949e;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.95rem;
+  padding: 0 0 0 0.35rem;
+}
+
+.toast .toast-close:hover {
+  color: #fff;
+}
+
 main {
   padding: 2rem;
   max-width: 80rem;
@@ -737,4 +1195,131 @@ a:hover {
 .inline-form button.danger {
   background: #ffd6d6;
   border: 1px solid #d47676;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   DARK THEME (graph-ui v2 — dark is the default; see base.html pre-paint)
+
+   Dark = github-dark family so the light shell stops fighting the always-
+   dark graph canvas. All overrides live under one [data-theme="dark"]
+   scope (bare attr selector so nested dark regions work too). The graph
+   canvas itself is hardcoded dark above and intentionally unaffected here.
+   ═══════════════════════════════════════════════════════════════════ */
+:root[data-theme="dark"],
+[data-theme="dark"] {
+  color-scheme: dark;
+  --fg: #e6edf3;
+  --bg: #0d1117;
+  --muted: #8b949e;
+  --accent: #58a6ff;
+  --border: #30363d;
+  --row-alt: #161b22;
+}
+
+/* surfaces that were hardcoded light in the shell */
+[data-theme="dark"] .filter-bar,
+[data-theme="dark"] .badge.status,
+[data-theme="dark"] .body pre,
+[data-theme="dark"] .create-form input,
+[data-theme="dark"] .create-form textarea {
+  background: #161b22;
+  color: var(--fg);
+  border-color: var(--border);
+}
+
+/* native buttons themed explicitly */
+[data-theme="dark"] .filter-bar button,
+[data-theme="dark"] .form-actions button,
+[data-theme="dark"] .inline-form button,
+[data-theme="dark"] .filter-bar select,
+[data-theme="dark"] .filter-bar input,
+[data-theme="dark"] .inline-form select,
+[data-theme="dark"] .inline-form input {
+  background: #21262d;
+  color: var(--fg);
+  border: 1px solid var(--border);
+}
+
+[data-theme="dark"] .filter-bar button:hover,
+[data-theme="dark"] .form-actions button:hover,
+[data-theme="dark"] .inline-form button:hover {
+  background: #30363d;
+}
+
+/* current-version highlight rows — deep amber instead of pale yellow */
+[data-theme="dark"] table tbody tr.current,
+[data-theme="dark"] table tbody tr.current:nth-child(even) {
+  background: #2a2410;
+}
+
+/* banners — deep-tinted variants */
+[data-theme="dark"] .banner {
+  background: #2a2410;
+  border-color: #6b5a1f;
+  color: var(--fg);
+}
+
+[data-theme="dark"] .banner.timetravel {
+  background: #0d1f33;
+  border-color: #2a5a8f;
+}
+
+[data-theme="dark"] .banner.error {
+  background: #2a1414;
+  border-color: #8f3030;
+  color: #ffb3b3;
+}
+
+[data-theme="dark"] .banner.success {
+  background: #0d2616;
+  border-color: #2f6b3a;
+  color: #8fe0a0;
+}
+
+/* entry-type badges — deep-tint dark variants (keep the hue, drop the pastel) */
+[data-theme="dark"] .badge.type-goal { background: #2a1d0d; border-color: #6b4f1f; }
+[data-theme="dark"] .badge.type-activity { background: #0d1f33; border-color: #2a5a8f; }
+[data-theme="dark"] .badge.type-decision { background: #1d0f33; border-color: #5a3f8f; }
+[data-theme="dark"] .badge.type-research { background: #0d2616; border-color: #2f6b3a; }
+[data-theme="dark"] .badge.type-discuss { background: #2a1414; border-color: #8f3030; }
+[data-theme="dark"] .badge.degraded { background: #2a1d0d; border-color: #8f5f1f; color: #ffce9e; }
+
+[data-theme="dark"] .inline-form button.danger {
+  background: #3a1414;
+  border-color: #8f3030;
+  color: #ffb3b3;
+}
+
+[data-theme="dark"] .pending-cta button {
+  background: #2a2410;
+  border-color: #c08000;
+  color: #ffce6b;
+}
+
+/* header theme toggle button (top-right, beside the pending cta) */
+.theme-toggle {
+  margin-left: auto;
+  background: var(--surface, #fff);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.78rem;
+  padding: 0.3rem 0.6rem;
+  white-space: nowrap;
+}
+
+/* when the pending cta is present it takes margin-left:auto; the toggle then
+   sits right after it with a small gap (header is a flex row). */
+.pending-cta + .theme-toggle {
+  margin-left: 0.75rem;
+}
+
+.theme-toggle:hover {
+  border-color: var(--accent);
+}
+
+[data-theme="dark"] .theme-toggle {
+  background: #21262d;
 }

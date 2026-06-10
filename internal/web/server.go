@@ -86,8 +86,18 @@ func NewServer(svc *repository.Service, cfg config.Web) (*Server, error) {
 		mux:       http.NewServeMux(),
 	}
 
-	s.mux.HandleFunc("GET /", s.handleIndex)
-	s.mux.HandleFunc("GET /graph", s.handleGraph)
+	// The graph is the product's home — engineers land on the full-picture
+	// view (grill north star: the graph mirrors working memory). The entry
+	// list moves to /entries; the old /graph URL 302s to / so bookmarks survive.
+	s.mux.HandleFunc("GET /", s.handleGraph)
+	s.mux.HandleFunc("GET /entries", s.handleIndex)
+	s.mux.HandleFunc("GET /graph", func(w http.ResponseWriter, r *http.Request) {
+		target := "/"
+		if q := r.URL.RawQuery; q != "" {
+			target += "?" + q
+		}
+		http.Redirect(w, r, target, http.StatusFound)
+	})
 	s.mux.HandleFunc("GET /entries/{id}", s.handleEntryDetail)
 	s.mux.HandleFunc("GET /goals/{id}", s.handleGoalDetail)
 	s.mux.HandleFunc("GET /new/{type}", s.handleNewForm)
