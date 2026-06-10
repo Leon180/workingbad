@@ -175,6 +175,22 @@ func allCommands() []*cli.Command {
 				"  workingbad summarize",
 			Action: actionSummarize,
 		},
+		{
+			Name:  "seed-github",
+			Usage: "fetch issues + PRs from a GitHub repo and seed them as truth-source entries (read-only)",
+			Description: "Phase 1 dogfood seeder. Issues become goal entries, PRs become activity\n" +
+				"entries, and \"Closes/Fixes/Resolves #N\" references in PR bodies become\n" +
+				"part_of edges from the PR into the matching goal. Uses `gh auth token`\n" +
+				"if GH_TOKEN env is unset. Read-only against GitHub; never pushes.\n\n" +
+				"EXAMPLES:\n" +
+				"  workingbad seed-github --wipe                       # current repo, wipe local DB first\n" +
+				"  workingbad seed-github --repo OtherOrg/otherrepo",
+			Flags: []cli.Flag{
+				&cli.StringFlag{Name: "repo", Usage: "owner/name (defaults to git remote 'origin' inferred from cwd)"},
+				&cli.BoolFlag{Name: "wipe", Usage: "delete the configured SQLite file before seeding"},
+			},
+			Action: actionSeedGitHub,
+		},
 	}
 }
 
