@@ -47,7 +47,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7.0.0
+      - uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee # v7.0.0
         with:
           # action@v7 + v2.x ships with Go 1.25 toolchain; @v6 + `latest`
           # resolves to v1.64.x (Go 1.24, fails on our go.mod).
