@@ -3,73 +3,83 @@ package repository
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 )
 
-// TestQueryPlan_BitemporalReadsUseIndexes guards against silent index
-// regressions on the at-time query layer (red team #6 in grill doc).
+// TestSlowQueries_AssertNoFullTableScan is the durable replacement for
+// the prior index-name-golden test (issue #31). SQLite explicitly does
+// NOT guarantee EXPLAIN QUERY PLAN output stability across versions; a
+// modernc.org/sqlite or upstream-SQLite bump silently breaks any test
+// that pins specific index names.
 //
-// The bitemporal queries are sensitive to SQLite's query planner — a
-// missing index or a small change in WHERE order can swing them from
-// index-driven to full-table-scan, which is a perfectly correct but
-// catastrophically slow regression. EXPLAIN QUERY PLAN at CI surfaces
-// the swing the moment it happens.
+// What we actually need to protect against is the real perf regression:
+// "a hot table fell to a full scan". The plan's "USING INDEX" /
+// "USING COVERING INDEX" / "USING PRIMARY KEY" tokens reliably surface
+// index-driven access; a bare "SCAN <table>" without a qualifying
+// "USING" clause is the regression signal.
 //
-// We don't pin exact plans (they're SQLite-version-sensitive); we assert
-// that for each query, at least one expected index appears in the plan
-// text. Failing tests should never be "the planner output changed"
-// alone — they should be a real plan regression.
-func TestQueryPlan_BitemporalReadsUseIndexes(t *testing.T) {
+// The full access-path expectations live in docs/PERF.md so the
+// reviewer can see what the test enforces without reading the code.
+// When the schema or a hot query changes, update BOTH places — the
+// test catches the regression, the doc explains what we expected.
+func TestSlowQueries_AssertNoFullTableScan(t *testing.T) {
 	s := newService(t)
 	ctx := context.Background()
-
 	asOf := time.Now().UTC().Format(time.RFC3339Nano)
 
 	cases := []struct {
-		name        string
-		query       string
-		args        []any
-		mustContain []string // any one of these in plan text
+		// name reads as a docs/PERF.md anchor (see "Query Plan Reference").
+		name  string
+		query string
+		args  []any
 	}{
 		{
-			name: "ListEntriesAt — supersede chain walk",
+			name: "ListEntriesAt — bitemporal goal lookup",
 			query: `EXPLAIN QUERY PLAN
                 SELECT e.id FROM entries e
                  WHERE COALESCE(e.ingested_at, e.created_at) <= ?
                    AND COALESCE(e.occurred_at, e.ingested_at, e.created_at) <= ?
                    AND e.type = 'goal'`,
-			args:        []any{asOf, asOf},
-			mustContain: []string{"idx_entries_type_occurred_current", "idx_entries_type_current", "idx_entries_logical_occurred"},
+			args: []any{asOf, asOf},
 		},
 		{
 			name: "EntryHistory — chain walk by logical_id",
 			query: `EXPLAIN QUERY PLAN
                 SELECT id, version FROM entries
                  WHERE logical_id = ?`,
-			args:        []any{"some-logical-id"},
-			mustContain: []string{"idx_entries_logical_occurred", "idx_entries_logical_id"},
+			args: []any{"some-logical-id"},
 		},
 		{
-			name: "EdgesAt — from-side scan",
+			name: "EdgesAt — from-side live edge fetch",
 			query: `EXPLAIN QUERY PLAN
                 SELECT id FROM edges
                  WHERE from_id = ?
                    AND COALESCE(ingested_at, created_at) <= ?
                    AND is_current = 1`,
-			args:        []any{"some-id", asOf},
-			mustContain: []string{"idx_edges_from_occurred_live", "idx_edges_from_live", "idx_edges_live_triple"},
+			args: []any{"some-id", asOf},
 		},
 		{
-			name: "fetched idempotency lookup — (logical_id, source_event_hash)",
+			name: "EdgesAt — to-side live edge fetch",
+			query: `EXPLAIN QUERY PLAN
+                SELECT id FROM edges
+                 WHERE to_id = ?
+                   AND COALESCE(ingested_at, created_at) <= ?
+                   AND is_current = 1`,
+			args: []any{"some-id", asOf},
+		},
+		{
+			name: "Idempotency lookup — (logical_id, source_event_hash)",
 			query: `EXPLAIN QUERY PLAN
                 SELECT id FROM entries
                  WHERE logical_id = ? AND source_event_hash = ? AND is_current = 1`,
-			args:        []any{"L", "H"},
-			mustContain: []string{"idx_entries_source_event_hash", "idx_entries_logical_occurred", "idx_entries_logical_id"},
+			args: []any{"L", "H"},
 		},
 	}
+	// EntryBySourceRef plan check is added in the PR that introduces
+	// entry_source_refs (see #46) — keeping this PR strictly off main.
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -77,19 +87,40 @@ func TestQueryPlan_BitemporalReadsUseIndexes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("EXPLAIN QUERY PLAN: %v", err)
 			}
-			found := false
-			for _, want := range tc.mustContain {
-				if strings.Contains(plan, want) {
-					found = true
-					break
-				}
-			}
-			if !found {
-				t.Errorf("plan regression:\n  expected one of %v in plan\n  got: %s",
-					tc.mustContain, plan)
+			if err := assertIndexDriven(plan); err != nil {
+				t.Errorf("plan regression:\n  %v\n  full plan:\n%s", err, plan)
 			}
 		})
 	}
+}
+
+// assertIndexDriven returns nil iff:
+//   - the plan contains at least one of {USING INDEX, USING COVERING
+//     INDEX, USING PRIMARY KEY, USING INTEGER PRIMARY KEY} — proves
+//     the planner uses an index for at least the driving table
+//   - no `SCAN entries` or `SCAN edges` row appears WITHOUT an
+//     accompanying USING clause on the same row — a bare scan of the
+//     two main tables is the regression signal we care about
+//
+// Tables NOT in the protected set (e.g. tiny lookup tables, the goose
+// version table) are allowed to scan — the planner picks scan over
+// index for small tables and that's correct.
+func assertIndexDriven(plan string) error {
+	hasUsing := strings.Contains(plan, "USING INDEX") ||
+		strings.Contains(plan, "USING COVERING INDEX") ||
+		strings.Contains(plan, "USING PRIMARY KEY") ||
+		strings.Contains(plan, "USING INTEGER PRIMARY KEY")
+	if !hasUsing {
+		return fmt.Errorf("plan has no USING <index>/COVERING INDEX/PRIMARY KEY — looks like a full scan")
+	}
+	// Bare-scan check: each line that mentions SCAN must also include USING.
+	scanRe := regexp.MustCompile(`SCAN (entries|edges)\b`)
+	for _, line := range strings.Split(plan, "\n") {
+		if scanRe.MatchString(line) && !strings.Contains(line, "USING") {
+			return fmt.Errorf("hot table fell to bare SCAN: %s", strings.TrimSpace(line))
+		}
+	}
+	return nil
 }
 
 func queryPlan(ctx context.Context, s *Service, q string, args ...any) (string, error) {
