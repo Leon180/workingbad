@@ -1,0 +1,176 @@
+name: CodeQL Findings Surface
+
+# L1 (per issue #26): make Copilot Autofix / CodeQL findings IMPOSSIBLE to
+# miss on a PR.
+#
+# Why this exists: today's PR #10 had a real go/bad-redirect-check finding
+# that sat invisible until the user spotted the small "AI found potential
+# problems" banner in the GitHub UI. With `required_review_thread_
+# resolution` on the main ruleset, unattended findings silently block
+# merges. This workflow makes every finding loud, sorted, and triageable
+# in one structured PR comment that updates in place.
+#
+# What this workflow does NOT do (deliberately, per issue #26):
+# - auto-apply Copilot Autofix suggestions (L2 territory, white-list only)
+# - dismiss findings on the user's behalf
+# - block PR merge (the existing ruleset + required-review-thread does)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to refresh the summary on'
+        required: true
+        type: number
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: read
+
+jobs:
+  surface:
+    runs-on: ubuntu-latest
+    steps:
+      - name: enumerate findings and post idempotent summary
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const prNumber = context.eventName === 'workflow_dispatch'
+              ? parseInt(context.payload.inputs.pr_number, 10)
+              : context.payload.pull_request.number;
+            core.info(`scanning PR #${prNumber}`);
+
+            // 1. Pull the PR + its head SHA.
+            const pr = (await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            })).data;
+            const headSHA = pr.head.sha;
+
+            // 2. CodeQL code-scanning alerts whose latest instance is on
+            //    this PR head. The `ref` filter accepts a pull-request
+            //    ref; the merge variant covers stacked-PR shapes too.
+            const alertRef = `refs/pull/${prNumber}/merge`;
+            let alerts = [];
+            try {
+              const res = await github.request(
+                'GET /repos/{owner}/{repo}/code-scanning/alerts',
+                {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: alertRef,
+                  state: 'open',
+                  per_page: 100,
+                }
+              );
+              alerts = res.data;
+            } catch (e) {
+              core.warning(`code-scanning alerts API: ${e.message}`);
+            }
+            core.info(`code-scanning alerts: ${alerts.length}`);
+
+            // 3. github-advanced-security[bot] inline review comments
+            //    (the things rendered in the PR diff as "AI found
+            //    potential problems"). Same head SHA scoping.
+            const review = (await github.rest.pulls.listReviewComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              per_page: 100,
+            })).data.filter(c =>
+              c.user.login === 'github-advanced-security[bot]' &&
+              c.original_commit_id === headSHA
+            );
+            core.info(`bot review comments at head: ${review.length}`);
+
+            // 4. Build the summary body. Severity order: error > warning >
+            //    note > everything else.
+            const severityRank = { error: 0, warning: 1, note: 2 };
+            const rankOf = a => severityRank[a.rule?.severity] ?? 3;
+            alerts.sort((a, b) => rankOf(a) - rankOf(b));
+
+            const total = alerts.length + review.length;
+            const lines = [
+              '<!-- managed-by-codeql-summary -->',
+              '## 🔎 Code-scanning findings',
+              '',
+              `**${total} finding${total === 1 ? '' : 's'}** at head \`${headSHA.slice(0, 7)}\`.`,
+              '',
+            ];
+
+            if (alerts.length > 0) {
+              lines.push('### CodeQL alerts');
+              lines.push('');
+              lines.push('| severity | rule | file:line | message |');
+              lines.push('| --- | --- | --- | --- |');
+              for (const a of alerts) {
+                const sev = a.rule?.security_severity_level ||
+                            a.rule?.severity || 'unknown';
+                const loc = `${a.most_recent_instance.location.path}:${a.most_recent_instance.location.start_line}`;
+                const msg = (a.most_recent_instance.message?.text || '')
+                  .replace(/\|/g, '\\|')
+                  .slice(0, 140);
+                lines.push(
+                  `| ${sev} | [\`${a.rule.id}\`](${a.html_url}) | \`${loc}\` | ${msg} |`
+                );
+              }
+              lines.push('');
+            }
+
+            if (review.length > 0) {
+              lines.push('### Inline review comments (Copilot Autofix)');
+              lines.push('');
+              for (const c of review) {
+                const first = (c.body || '').split('\n')[0]
+                  .replace(/^##\s*/, '').slice(0, 140);
+                lines.push(`- [\`${c.path}:${c.line ?? c.original_line}\`](${c.html_url}) — ${first}`);
+              }
+              lines.push('');
+            }
+
+            if (total === 0) {
+              lines.push('No open code-scanning alerts and no AI review comments at this commit. ✅');
+            } else {
+              lines.push('---');
+              lines.push('Resolve each finding by **applying the fix and pushing** or by **dismissing as false-positive** in the Security tab. The main-branch ruleset requires every review thread to be resolved before merge.');
+            }
+
+            const body = lines.join('\n');
+
+            // 5. Idempotent: edit our existing summary comment if any,
+            //    else create one. Marker comment in line 1 identifies us.
+            const allComments = await github.paginate(
+              github.rest.issues.listComments,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                per_page: 100,
+              }
+            );
+            const existing = allComments.find(c =>
+              c.user.type === 'Bot' &&
+              c.body?.includes('<!-- managed-by-codeql-summary -->')
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+              core.notice(`updated existing summary comment ${existing.id}`);
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body,
+              });
+              core.notice('created summary comment');
+            }
