@@ -13,27 +13,37 @@ import (
 	"github.com/Leon180/workingbad/internal/repository"
 )
 
-// newTestServer builds a Server backed by an in-memory-equivalent temp DB
-// + a freshly-migrated schema. Uses httptest.NewServer-style: the helper
-// returns a *Server you can drive via the underlying http.Handler exposed
-// for testing.
+// newTestServer is the testing.T entry point — thin wrapper around
+// newTestServerFromTB so both Test* and Benchmark* code paths can build
+// a wired-up Server from the same body.
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
-	dbPath := t.TempDir() + "/web.sqlite"
+	return newTestServerFromTB(t)
+}
+
+// newTestServerFromTB builds a Server backed by a temp SQLite DB with a
+// freshly-migrated schema. Caller drives via srv.mux.ServeHTTP — Serve()
+// is never started, and the listener is closed immediately so the kernel
+// reclaims the ephemeral port.
+//
+// Accepts testing.TB so Benchmark code paths can share the helper — the
+// TempDir / Helper / Cleanup / Fatalf surface is identical on T and B.
+func newTestServerFromTB(tb testing.TB) *Server {
+	tb.Helper()
+	dbPath := tb.TempDir() + "/web.sqlite"
 	db, err := repository.Open(dbPath)
 	if err != nil {
-		t.Fatalf("open db: %v", err)
+		tb.Fatalf("open db: %v", err)
 	}
-	t.Cleanup(func() { _ = db.Close() })
+	tb.Cleanup(func() { _ = db.Close() })
 	svc := repository.NewService(db)
 
-	// Port=0 lets the kernel pick a free port. Test never calls Serve();
-	// it talks to the handler directly via the mux.
+	// Port=0 → kernel picks a free port. We close the listener immediately
+	// because tests/benches talk to srv.mux directly.
 	srv, err := NewServer(svc, config.Web{Port: 0})
 	if err != nil {
-		t.Fatalf("NewServer: %v", err)
+		tb.Fatalf("NewServer: %v", err)
 	}
-	// Close the listener immediately — tests use the mux directly.
 	_ = srv.listener.Close()
 	return srv
 }
