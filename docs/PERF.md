@@ -75,12 +75,36 @@ Pre-merge: a PR that introduces a real regression visibly fails the `bench: regr
 
 Override: if a slowdown is intentional (e.g. necessary for correctness), explain in the PR description and request reviewer override. There is no `[bench: skip]` magic — the principle is "every regression is at least acknowledged".
 
+## On-demand profiling (`workingbad serve --debug`)
+
+When you actually need to see "where is the binary spending CPU / allocating / blocking right now", start the server with `--debug`:
+
+```bash
+workingbad serve --debug                       # pprof on 127.0.0.1:6060 by default
+workingbad serve --debug --debug-port 6061     # pick a different port
+```
+
+A second http.Server is started on `127.0.0.1:<debug-port>` exposing only the standard `net/http/pprof` endpoints. **Loopback-only is non-negotiable** — pprof leaks goroutine stacks, allocations, and live profiling data; it must never bind a wildcard interface (there's a guarded test for this in `serve_test.go`).
+
+Common one-liners:
+
+```bash
+# 10-second CPU profile
+go tool pprof -http=:0 http://127.0.0.1:6060/debug/pprof/profile?seconds=10
+
+# Heap snapshot
+go tool pprof -http=:0 http://127.0.0.1:6060/debug/pprof/heap
+
+# 5-second execution trace
+curl -o trace.out http://127.0.0.1:6060/debug/pprof/trace?seconds=5
+go tool trace trace.out
+```
+
+`--debug` is opt-in: pprof handlers and the listener pay nothing in the default path (no `_ "net/http/pprof"` blank import that would auto-register on DefaultServeMux).
+
 ## What we deliberately don't measure (yet)
 
-- **End-to-end latency** under realistic load: separate issue (#30) for Vegeta-driven load test
 - **Memory leaks** over long uptime: out of scope for dogfood phase
-- **CPU profile during real work**: covered by `--debug` pprof flag (#29) on-demand
-- **SQL query plans**: covered by `docs/PERF.md` query reference (#31) + runtime trace during load test
 
 ## When to re-baseline the reference numbers
 
