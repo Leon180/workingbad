@@ -1,8 +1,6 @@
 package web
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"net/http"
 	"strings"
 
@@ -72,7 +70,7 @@ func (s *Server) handleNewSubmit(w http.ResponseWriter, r *http.Request) {
 		Title:     title,
 		Body:      body,
 		Source:    domain.SourceManual,
-		SourceRef: sha256Hex(typ, title, body),
+		SourceRef: domain.SourceRefForManual(typ, title, body),
 		Origin:    domain.OriginLocal,
 		Status:    status,
 	})
@@ -113,17 +111,4 @@ func isCreatableType(t domain.EntryType) bool {
 		}
 	}
 	return false
-}
-
-// sha256Hex mirrors cmd/workingbad/commands.go's helper so manual entries
-// created via either CLI or Web UI share the same source_ref derivation
-// (same title+body → same hash → idempotent create-dedupe).
-func sha256Hex(typ domain.EntryType, title, body string) string {
-	h := sha256.New()
-	h.Write([]byte(string(typ)))
-	h.Write([]byte{0})
-	h.Write([]byte(title))
-	h.Write([]byte{0})
-	h.Write([]byte(body))
-	return hex.EncodeToString(h.Sum(nil))
 }
