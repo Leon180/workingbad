@@ -11,11 +11,11 @@
 {{else if not .AsOf.IsZero}}
 <div class="banner timetravel">
   ⏳ viewing state at <strong>{{fmtTime .AsOf}}</strong>
-  <a href="/{{if .ActiveType}}?type={{.ActiveType}}{{end}}" class="reset">back to live</a>
+  <a href="/entries{{if .ActiveType}}?type={{.ActiveType}}{{end}}" class="reset">back to live</a>
 </div>
 {{end}}
 
-<form method="get" action="/" class="filter-bar">
+<form method="get" action="/entries" class="filter-bar">
   <label>
     type
     <select name="type" onchange="this.form.submit()">
@@ -36,7 +36,7 @@
   </label>
   <button type="submit">apply</button>
   {{if or .ActiveType (ne .ActiveLimit 50) .ActiveAt}}
-    <a href="/" class="reset">reset</a>
+    <a href="/entries" class="reset">reset</a>
   {{end}}
 </form>
 
@@ -75,7 +75,7 @@
 </table>
 <p class="meta">{{len .Entries}} entries</p>
 {{else}}
-<p class="empty">No entries match. <a href="/">clear filters</a> or create one via CLI:</p>
+<p class="empty">No entries match. <a href="/entries">clear filters</a> or create one via CLI:</p>
 <pre>workingbad note "title here"</pre>
 {{end}}
 {{end}}

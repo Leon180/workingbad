@@ -7,11 +7,11 @@
 {{else if not .AsOf.IsZero}}
 <div class="banner timetravel">
   ⏳ viewing graph as of <strong>{{fmtTime .AsOf}}</strong>
-  <a href="/graph" class="reset">back to live</a>
+  <a href="/" class="reset">back to live</a>
 </div>
 {{end}}
 
-<form method="get" action="/graph" class="filter-bar">
+<form method="get" action="/" class="filter-bar">
   <label>
     repo
     <input type="text" name="repo" value="{{.ActiveRepo}}" placeholder="all" style="width: 12rem">
@@ -22,7 +22,7 @@
   </label>
   <button type="submit">apply</button>
   {{if or .ActiveAt .ActiveRepo}}
-    <a href="/graph" class="reset">reset</a>
+    <a href="/" class="reset">reset</a>
   {{end}}
 </form>
 
@@ -33,94 +33,165 @@ workingbad note "investigate sqlc"
 workingbad attach &lt;note-id&gt; &lt;goal-id&gt;</pre>
 {{else}}
 
+{{/* Client-side controls — search fades non-matches, edge toggles declutter
+     relationships. Purely JS-driven; no server roundtrip. blocks is never
+     filterable. Hidden where JS is off. */}}
+<form class="filter-bar graph-controls" id="graph-controls" onsubmit="return false" hidden>
+  <label>
+    search
+    <input type="text" id="graph-search" placeholder="fade non-matches" style="width: 14rem" autocomplete="off">
+  </label>
+  <label class="row"><input type="checkbox" checked disabled> blocks (always)</label>
+  <label class="row"><input type="checkbox" class="edge-toggle" value="relates_to" checked> relates_to</label>
+  <label class="row"><input type="checkbox" class="edge-toggle" value="derived_from"> derived_from</label>
+  <label class="row"><input type="checkbox" class="edge-toggle" value="iteration_of"> iteration_of</label>
+  <a href="#" class="reset" id="graph-reset" hidden>reset</a>
+</form>
+
 <div class="graph-legend">
-  <span class="legend-item"><span class="legend-dot type-marker activity"></span>activity</span>
-  <span class="legend-item"><span class="legend-dot type-marker decision"></span>decision</span>
-  <span class="legend-item"><span class="legend-dot type-marker research"></span>research</span>
-  <span class="legend-item"><span class="legend-dot type-marker discuss"></span>discuss</span>
+  <span class="legend-item"><span class="legend-dot activity"></span>activity</span>
+  <span class="legend-item"><span class="legend-dot decision"></span>decision</span>
+  <span class="legend-item"><span class="legend-dot research"></span>research</span>
+  <span class="legend-item"><span class="legend-dot discuss"></span>discuss</span>
   <span class="legend-sep">·</span>
   <span class="legend-item legend-edge-blocks">blocks (cross-lane)</span>
   <span class="legend-item legend-edge-other">relates / derived / iteration_of</span>
   <span class="legend-sep">·</span>
-  <span class="legend-item">lane colour = goal · click any node to drill in</span>
+  <span class="legend-item">lane = goal · x = occurred_at · hover for detail · click to inspect</span>
 </div>
 
-<div class="graph-frame">
-<svg viewBox="0 0 {{.Canvas.Width}} {{.Canvas.Height}}"
-     xmlns="http://www.w3.org/2000/svg"
-     preserveAspectRatio="xMidYMid meet"
-     class="graph-svg">
-  <defs>
-    <marker id="arrow-blocks" viewBox="0 0 10 10" refX="9" refY="5"
-            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#c44"></path>
-    </marker>
-    <filter id="dot-shadow" x="-50%" y="-50%" width="200%" height="200%">
-      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-opacity="0.25"></feDropShadow>
-    </filter>
-  </defs>
+<div class="graph-layout">
+<div class="tl-wrap" id="tl-wrap">
 
-  <!-- lane lines + left-edge name labels -->
-  <g class="lanes">
-    {{range $i, $l := .Canvas.Lanes}}
-    <line class="lane-line {{if $l.Goal}}lane-{{$l.ColorIndex}}{{else}}lane-orphan{{end}}"
-          x1="170" y1="{{$l.Y}}"
-          x2="{{$l.GoalX}}" y2="{{$l.Y}}"></line>
-    <text x="160" y="{{plusF $l.Y 4.0}}" text-anchor="end"
-          class="lane-label {{if $l.Goal}}lane-label-{{$l.ColorIndex}}{{else}}lane-label-orphan{{end}}">
-      {{if $l.Goal}}{{truncate $l.Goal.Title 18}}{{else}}orphan{{end}}
-    </text>
+  {{/* zoom control overlay — time-density, not viewBox scale (JS-revealed) */}}
+  <div class="graph-zoom" id="graph-zoom" hidden>
+    <button type="button" data-zoom="out" title="zoom out (less density)">−</button>
+    <span id="graph-zoom-pct">100%</span>
+    <button type="button" data-zoom="in" title="zoom in (more density)">+</button>
+    <button type="button" data-zoom="fit" title="fit whole project to width">⤢</button>
+  </div>
+
+  {{/* pinned LEFT: lane titles (constant while the middle scrolls under them) */}}
+  <div class="tl-titles" style="height: {{.Canvas.Height}}px; width: {{.Canvas.TitleW}}px">
+    {{range .Canvas.Lanes}}
+    <div class="tl-title {{if .Goal}}lane-label-{{.ColorIndex}}{{else}}lane-label-orphan{{end}}"
+         style="top: {{minusF .Y 10.0}}px">
+      {{if .Goal}}{{truncate .Goal.Title 18}}{{else}}orphan{{end}}
+    </div>
     {{end}}
-  </g>
+  </div>
 
-  <!-- cross-lane edges -->
-  <g class="edges">
-    {{range .Canvas.Edges}}
-    <path d="M {{.FromX}} {{.FromY}} Q {{.MidX}} {{.MidY}} {{.ToX}} {{.ToY}}"
-          class="edge edge-{{.Style}}"
-          fill="none"
-          {{if eq .Style "blocks"}}marker-end="url(#arrow-blocks)"{{end}}>
-      <title>{{.Style}}</title>
-    </path>
-    {{end}}
-  </g>
+  {{/* scrollable MIDDLE: the timeline SVG (1 user unit = 1px → native scroll) */}}
+  <div class="tl-scroll" id="tl-scroll">
+    <svg width="{{.Canvas.ContentWidth}}" height="{{.Canvas.Height}}"
+         viewBox="0 0 {{.Canvas.ContentWidth}} {{.Canvas.Height}}"
+         xmlns="http://www.w3.org/2000/svg"
+         class="graph-svg labels-hover" id="tl-svg"
+         data-axis-x1="{{.Canvas.AxisX1}}" data-axis-x2="{{.Canvas.AxisX2}}"
+         data-content-width="{{.Canvas.ContentWidth}}" data-ppd="{{.Canvas.PxPerDay}}"
+         data-span-days="{{.Canvas.SpanDays}}" data-title-w="{{.Canvas.TitleW}}"
+         data-goal-w="{{.Canvas.GoalColW}}">
+      <defs>
+        <marker id="arrow-blocks" viewBox="0 0 10 10" refX="9" refY="5"
+                markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#cc4444"></path>
+        </marker>
+        <filter id="dot-shadow" x="-50%" y="-50%" width="200%" height="200%">
+          <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-opacity="0.25"></feDropShadow>
+        </filter>
+      </defs>
 
-  <!-- nodes (dots + goal anchors) -->
-  <g class="nodes">
-    {{range .Canvas.Nodes}}
-    {{$e := .Entry}}
-    <a href="{{if .IsGoal}}/goals/{{$e.ID}}{{else}}/entries/{{$e.ID}}{{end}}">
-      {{if .IsGoal}}
-      <g class="node node-goal lane-{{.ColorIndex}}" transform="translate({{.X}}, {{.Y}})" filter="url(#dot-shadow)">
-        <rect width="{{$.Canvas.Lanes | index .LaneIndex | goalW}}" height="56" rx="10" ry="10" class="goal-shape"></rect>
-        <text x="{{$.Canvas.Lanes | index .LaneIndex | goalW | halfF}}" y="22"
-              text-anchor="middle" dominant-baseline="central" class="goal-label">
-          {{truncate $e.Title 22}}
-        </text>
-        {{if $e.Status}}
-        <text x="{{$.Canvas.Lanes | index .LaneIndex | goalW | halfF}}" y="40"
-              text-anchor="middle" dominant-baseline="central" class="goal-status">
-          {{$e.Status}}
-        </text>
+      <g class="lanes">
+        {{range .Canvas.Lanes}}
+        <line class="lane-line {{if .Goal}}lane-{{.ColorIndex}}{{else}}lane-orphan{{end}}"
+              x1="0" y1="{{.Y}}" x2="{{$.Canvas.ContentWidth}}" y2="{{.Y}}"></line>
         {{end}}
-        <title>goal: {{$e.Title}}{{if $e.Status}} ({{$e.Status}}){{end}}</title>
       </g>
-      {{else}}
-      <g class="node node-{{$e.Type}} lane-{{.ColorIndex}}" transform="translate({{.X}}, {{.Y}})" filter="url(#dot-shadow)">
-        <circle cx="0" cy="0" r="{{.R}}" class="dot type-{{$e.Type}}"></circle>
-        <text x="0" y="{{plusF .R 14.0}}" text-anchor="middle"
-              dominant-baseline="hanging" class="dot-label">
-          {{truncate $e.Title 28}}
-        </text>
-        <title>{{$e.Type}}: {{$e.Title}}</title>
+
+      {{if .Canvas.Ticks}}
+      <g class="axis">
+        <line class="axis-line" x1="{{.Canvas.AxisX1}}" y1="{{minusF .Canvas.Height 26.0}}"
+              x2="{{.Canvas.AxisX2}}" y2="{{minusF .Canvas.Height 26.0}}"></line>
+        {{range .Canvas.Ticks}}
+        <line class="axis-line" x1="{{.X}}" y1="{{minusF $.Canvas.Height 30.0}}"
+              x2="{{.X}}" y2="{{minusF $.Canvas.Height 22.0}}"></line>
+        <text class="axis-tick" x="{{.X}}" y="{{minusF $.Canvas.Height 10.0}}" text-anchor="middle">{{.Label}}</text>
+        {{end}}
       </g>
       {{end}}
+
+      <g class="edges">
+        {{range .Canvas.Edges}}
+        <path d="M {{.FromX}} {{.FromY}} Q {{.MidX}} {{.MidY}} {{.ToX}} {{.ToY}}"
+              class="edge edge-{{.Style}}" fill="none"
+              data-style="{{.Style}}" data-from="{{.Edge.FromID}}" data-to="{{.Edge.ToID}}"
+              {{if eq .Style "blocks"}}marker-end="url(#arrow-blocks)"{{end}}>
+          <title>{{.Style}}</title>
+        </path>
+        {{end}}
+      </g>
+
+      <g class="nodes">
+        {{range .Canvas.Nodes}}
+        {{$e := .Entry}}
+        <a href="/entries/{{$e.ID}}">
+          <g class="node node-{{$e.Type}} lane-{{.ColorIndex}}"
+             transform="translate({{.X}}, {{.Y}})" filter="url(#dot-shadow)"
+             data-id="{{$e.ID}}" data-kind="entry" data-type="{{$e.Type}}"
+             data-title="{{$e.Title}}"
+             data-occurred="{{fmtTime $e.OccurredAt}}" data-ingested="{{fmtTime $e.IngestedAt}}"
+             data-version="{{$e.Version}}" data-body="{{$e.Body}}"
+             data-href="/entries/{{$e.ID}}">
+            <circle cx="0" cy="0" r="{{.R}}" class="dot type-{{$e.Type}}"></circle>
+            <circle cx="0" cy="0" r="22" fill="transparent" class="hit"></circle>
+            <text x="0" y="{{plusF .R 14.0}}" text-anchor="middle"
+                  dominant-baseline="hanging" class="dot-label">
+              {{truncate $e.Title 28}}
+            </text>
+            <title>{{$e.Type}}: {{$e.Title}}</title>
+          </g>
+        </a>
+        {{end}}
+      </g>
+    </svg>
+  </div>
+
+  {{/* pinned RIGHT: goal anchors (status as border treatment, not colour) */}}
+  <div class="tl-goals" style="height: {{.Canvas.Height}}px; width: {{.Canvas.GoalColW}}px">
+    {{range .Canvas.Lanes}}{{if .Goal}}
+    {{$g := .Goal}}
+    <a class="tl-goal node-goal lane-{{.ColorIndex}}{{if $g.Status}} status-{{$g.Status}}{{end}}"
+       href="/goals/{{$g.ID}}"
+       style="top: {{minusF .Y 28.0}}px"
+       data-id="{{$g.ID}}" data-kind="goal" data-type="goal" data-title="{{$g.Title}}"
+       {{if $g.Status}}data-status="{{$g.Status}}"{{end}}
+       data-occurred="{{fmtTime $g.OccurredAt}}" data-ingested="{{fmtTime $g.IngestedAt}}"
+       data-version="{{$g.Version}}" data-body="{{$g.Body}}" data-href="/goals/{{$g.ID}}">
+      <span class="tl-goal-title">{{truncate $g.Title 20}}</span>
+      {{if $g.Status}}<span class="tl-goal-status">{{$g.Status}}</span>{{end}}
     </a>
-    {{end}}
-  </g>
-</svg>
+    {{end}}{{end}}
+  </div>
+
+  <div class="graph-tooltip" id="graph-tooltip" hidden></div>
 </div>
 
+<aside class="graph-panel" id="graph-panel" hidden></aside>
+</div>
+
+<p class="graph-hint" id="graph-hint" hidden>scroll = pan time · ctrl/⌘ + wheel = zoom density · hover for detail · click to inspect</p>
 <p class="meta">{{len .Canvas.Lanes}} lanes · {{len .Canvas.Nodes}} nodes · {{len .Canvas.Edges}} cross-lane edges</p>
 {{end}}
+
+{{if .MaterializedNum}}
+<div class="toast-stack" id="toast-stack">
+  <div class="toast success" data-toast>
+    <span class="toast-dot"></span>
+    <span>materialized {{.MaterializedNum}} segment{{if ne .MaterializedNum "1"}}s{{end}}{{if and .FailedNum (ne .FailedNum "0")}} · {{.FailedNum}} failed{{end}}</span>
+    <button type="button" class="toast-close" title="dismiss">×</button>
+  </div>
+</div>
+{{end}}
+
+<script src="/static/graph.js" defer></script>
 {{end}}

@@ -54,7 +54,7 @@ func TestWebJourney_FullDogfoodingLoop(t *testing.T) {
 	}
 
 	// 2. List page shows the goal under type=goal filter.
-	body := getBody(t, srv, "/?type=goal")
+	body := getBody(t, srv, "/entries?type=goal")
 	if !strings.Contains(body, "Ship Slice B") {
 		t.Errorf("created goal not visible in list: %q", body)
 	}
@@ -63,7 +63,7 @@ func TestWebJourney_FullDogfoodingLoop(t *testing.T) {
 	seedPendingSegment(t, srv, ctx, "repo-journey", "ref-journey", "patch-journey", "sha-journey")
 
 	// 4. Header CTA visible on next render.
-	body = getBody(t, srv, "/")
+	body = getBody(t, srv, "/entries")
 	if !strings.Contains(body, "1 pending segment") {
 		t.Errorf("pending CTA missing: %q", body)
 	}
@@ -78,7 +78,7 @@ func TestWebJourney_FullDogfoodingLoop(t *testing.T) {
 	}
 
 	// 6. New activity appears in the list (under type=activity).
-	body = getBody(t, srv, "/?type=activity")
+	body = getBody(t, srv, "/entries?type=activity")
 	if !strings.Contains(body, "activity") {
 		t.Errorf("materialized activity not visible: %q", body)
 	}
@@ -125,7 +125,7 @@ func TestWebJourney_FullDogfoodingLoop(t *testing.T) {
 	}
 
 	// 11. The live list reflects the done status.
-	body = getBody(t, srv, "/?type=goal")
+	body = getBody(t, srv, "/entries?type=goal")
 	if !strings.Contains(body, "done") {
 		t.Errorf("list view didn't pick up done status: %q", body)
 	}
@@ -166,13 +166,13 @@ func TestWebJourney_TimeTravelMirrorsBitemporalState(t *testing.T) {
 	}
 
 	// Live view shows v2.
-	body := getBody(t, srv, "/?type=decision")
+	body := getBody(t, srv, "/entries?type=decision")
 	if !strings.Contains(body, "Pick SQLite (v2)") {
 		t.Errorf("live should show v2: %q", body)
 	}
 
 	// At-time view shows v1 + the banner.
-	body = getBody(t, srv, "/?type=decision&at="+between.UTC().Format(time.RFC3339Nano))
+	body = getBody(t, srv, "/entries?type=decision&at="+between.UTC().Format(time.RFC3339Nano))
 	if !strings.Contains(body, "viewing state at") {
 		t.Error("missing time-travel banner")
 	}

@@ -23,7 +23,7 @@ func TestIndex_ListsEntries(t *testing.T) {
 	seedEntry(t, srv, ctx, domain.EntryTypeDecision, "Pick modernc.org/sqlite")
 	seedGoal(t, srv, ctx, "Ship Slice B")
 
-	body := getBody(t, srv, "/")
+	body := getBody(t, srv, "/entries")
 	for _, want := range []string{
 		"Investigate sqlc",
 		"Pick modernc.org/sqlite",
@@ -47,7 +47,7 @@ func TestIndex_TypeFilter(t *testing.T) {
 	seedEntry(t, srv, ctx, domain.EntryTypeResearch, "research-only-row")
 	seedGoal(t, srv, ctx, "goal-only-row")
 
-	body := getBody(t, srv, "/?type=goal")
+	body := getBody(t, srv, "/entries?type=goal")
 	if !strings.Contains(body, "goal-only-row") {
 		t.Error("type=goal should include the goal entry")
 	}
@@ -63,7 +63,7 @@ func TestIndex_TypeFilter_IgnoresBogus(t *testing.T) {
 	ctx := context.Background()
 	seedGoal(t, srv, ctx, "ship-it")
 
-	rec := getRec(t, srv, "/?type=banana")
+	rec := getRec(t, srv, "/entries?type=banana")
 	if rec.Code != http.StatusOK {
 		t.Errorf("bogus type should be ignored, got status %d", rec.Code)
 	}
@@ -90,7 +90,7 @@ func TestIndex_TimeTravelShowsHistoricalVersion(t *testing.T) {
 		t.Fatalf("Supersede: %v", err)
 	}
 
-	body := getBody(t, srv, "/?at="+between.Format(time.RFC3339Nano))
+	body := getBody(t, srv, "/entries?at="+between.Format(time.RFC3339Nano))
 	if !strings.Contains(body, "Initial finding") {
 		t.Errorf("at-time view should show v1 title — body=%q", body)
 	}
@@ -109,7 +109,7 @@ func TestIndex_AtParseError(t *testing.T) {
 	ctx := context.Background()
 	seedEntry(t, srv, ctx, domain.EntryTypeResearch, "live-row")
 
-	body := getBody(t, srv, "/?at=banana")
+	body := getBody(t, srv, "/entries?at=banana")
 	if !strings.Contains(body, "at parse error") {
 		t.Error("expected parse error banner")
 	}
@@ -523,7 +523,7 @@ func TestResolveLogical_BeyondScanLimit(t *testing.T) {
 // hint without crashing on a zero-row list.
 func TestIndex_EmptyState(t *testing.T) {
 	srv := newTestServer(t)
-	body := getBody(t, srv, "/")
+	body := getBody(t, srv, "/entries")
 	if !strings.Contains(body, "No entries match") {
 		t.Error("empty list should show empty-state copy")
 	}

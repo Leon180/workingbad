@@ -1,21 +1,28 @@
 {{define "base"}}
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{.Page.Title}}</title>
+  {{/* Pre-paint theme: dark is the default (matches the always-dark graph
+       canvas); a saved choice overrides it before first paint, no flash. */}}
+  <script>
+    try {
+      var t = localStorage.getItem("wb-theme");
+      if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+    } catch (e) {}
+  </script>
   <link rel="stylesheet" href="/static/app.css">
-  {{/* htmx is loaded only when a later view actually uses it — base layout stays JS-free. */}}
 </head>
 
 <body>
   <header>
     <a href="/" class="brand">workingbad</a>
     <nav>
-      <a href="/">entries</a>
-      <a href="/graph">graph</a>
+      <a href="/">graph</a>
+      <a href="/entries">entries</a>
       <span class="nav-sep">·</span>
       new:
       <a href="/new/research">research</a>
@@ -32,7 +39,26 @@
       <button type="submit">materialize now</button>
     </form>
     {{end}}
+    <button type="button" class="theme-toggle" id="theme-toggle" title="toggle dark / light">☾ dark</button>
   </header>
+  <script>
+    (function () {
+      var btn = document.getElementById("theme-toggle");
+      if (!btn) return;
+      var root = document.documentElement;
+      var sync = function () {
+        var dark = root.dataset.theme !== "light";
+        btn.textContent = dark ? "☾ dark" : "☀ light";
+      };
+      sync();
+      btn.addEventListener("click", function () {
+        var next = root.dataset.theme === "light" ? "dark" : "light";
+        root.dataset.theme = next;
+        try { localStorage.setItem("wb-theme", next); } catch (e) {}
+        sync();
+      });
+    })();
+  </script>
   <main>
     {{template "content" .Page}}
   </main>

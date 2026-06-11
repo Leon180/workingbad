@@ -57,6 +57,14 @@ type EdgePath struct {
 	Style        string
 }
 
+// AxisTick is one labelled gridline on the quiet occurred_at time axis
+// drawn under the lanes. X is the canvas coordinate; Label is a compact
+// time string (MM-DD when the span covers days, HH:MM when it's intraday).
+type AxisTick struct {
+	X     float64
+	Label string
+}
+
 // Canvas is what the SVG template consumes.
 type Canvas struct {
 	Lanes  []Lane
@@ -64,6 +72,23 @@ type Canvas struct {
 	Edges  []EdgePath
 	Width  float64
 	Height float64
+	// Time axis (only populated when the data spans enough real time to
+	// place nodes by occurred_at — same condition as useTimeAxis). Empty
+	// otherwise so the template skips the axis group entirely.
+	Ticks  []AxisTick
+	AxisX1 float64 // left end of the axis baseline (first tick)
+	AxisX2 float64 // right end of the axis baseline (last tick)
+
+	// Timeline-mode extras — zero/empty for the fit Build view, populated by
+	// BuildTimeline. The live graph is a horizontally-scrollable timeline:
+	// lane titles pin left, goal anchors pin right, the middle scrolls along
+	// a real occurred_at axis. ContentWidth is the scrollable SVG width (≥ the
+	// viewport); the pinned columns are TitleW (left) and GoalColW (right).
+	ContentWidth float64
+	PxPerDay     float64
+	TitleW       float64
+	GoalColW     float64
+	SpanDays     float64 // (maxT-minT) in days — client uses it to compute fit-to-width zoom
 }
 
 // Visual constants. Tuned to feel airy on a 1440-wide laptop browser.
@@ -78,6 +103,7 @@ const (
 	MarginRight    = 40.0
 	MinCanvasW     = 720.0
 	NodeMinSpacing = 110.0 // minimum horizontal gap between adjacent dots in a lane
+	axisTickCount  = 5     // evenly-spaced labelled ticks on the occurred_at axis
 )
 
 // laneColours is the palette — same family as git branch colors but
@@ -107,78 +133,11 @@ func Build(entries []domain.Entry, edges []domain.Edge) Canvas {
 		return Canvas{Width: MinCanvasW, Height: 200}
 	}
 
-	// Step 1: lanes from goals (sorted by title for determinism).
-	goals := []domain.Entry{}
-	for _, e := range entries {
-		if e.Type == domain.EntryTypeGoal {
-			goals = append(goals, e)
-		}
-	}
-	sort.Slice(goals, func(i, j int) bool { return goals[i].Title < goals[j].Title })
-
-	lanes := make([]Lane, 0, len(goals)+1)
-	goalToLane := make(map[string]int, len(goals))
-	for i := range goals {
-		lanes = append(lanes, Lane{
-			Goal:       &goals[i],
-			ColorIndex: i % len(laneColours),
-		})
-		goalToLane[goals[i].ID] = i
-	}
-	orphanLaneIdx := -1
-
-	// Step 2: assign each non-goal to its goal's lane via incoming part_of.
-	// An entry can technically be part_of multiple goals; we pick the
-	// alphabetically-first goal as its lane home so the assignment is
-	// deterministic. relates_to / blocks / derived_from / iteration_of
-	// do NOT drive lane assignment — they become cross-lane edges.
-	goalsOfEntry := make(map[string][]string) // entryID → []goalID
-	for _, e := range edges {
-		if e.Relation != domain.RelationPartOf {
-			continue
-		}
-		if _, isGoal := goalToLane[e.ToID]; !isGoal {
-			continue
-		}
-		goalsOfEntry[e.FromID] = append(goalsOfEntry[e.FromID], e.ToID)
-	}
-
-	entryLane := make(map[string]int, len(entries))
-	for _, e := range entries {
-		if e.Type == domain.EntryTypeGoal {
-			entryLane[e.ID] = goalToLane[e.ID]
-			continue
-		}
-		homeGoals := goalsOfEntry[e.ID]
-		if len(homeGoals) == 0 {
-			if orphanLaneIdx == -1 {
-				orphanLaneIdx = len(lanes)
-				lanes = append(lanes, Lane{
-					Goal:       nil,
-					ColorIndex: len(laneColours), // ".lane-orphan" in CSS
-				})
-			}
-			entryLane[e.ID] = orphanLaneIdx
-			continue
-		}
-		sort.Strings(homeGoals)
-		entryLane[e.ID] = goalToLane[homeGoals[0]]
-	}
-
-	// Step 3: bucket entries by lane, sort within bucket by OccurredAt.
-	buckets := make([][]domain.Entry, len(lanes))
-	for _, e := range entries {
-		if e.Type == domain.EntryTypeGoal {
-			continue // goals render as the lane anchor, not as a bucket entry
-		}
-		idx := entryLane[e.ID]
-		buckets[idx] = append(buckets[idx], e)
-	}
-	for li := range buckets {
-		sort.Slice(buckets[li], func(i, j int) bool {
-			return buckets[li][i].OccurredAt.Before(buckets[li][j].OccurredAt)
-		})
-	}
+	// Steps 1-3 (goals→lanes, part_of→lane home, time-sorted buckets) are
+	// shared with BuildTimeline; only the X positioning differs.
+	la := assignLanes(entries, edges)
+	lanes := la.lanes
+	buckets := la.buckets
 
 	// Step 4: compute X spread. Use real time mapping when the global
 	// range is wider than the minimum even-spacing for the densest lane;
@@ -318,11 +277,128 @@ func Build(entries []domain.Entry, edges []domain.Edge) Canvas {
 		})
 	}
 
+	ticks, axisX1, axisX2 := buildTimeAxis(useTimeAxis, minT, maxT, usableW)
+
 	return Canvas{
 		Lanes:  lanes,
 		Nodes:  nodes,
 		Edges:  edgePaths,
 		Width:  width,
 		Height: height,
+		Ticks:  ticks,
+		AxisX1: axisX1,
+		AxisX2: axisX2,
 	}
+}
+
+// laneLayout is the goal→lane assignment shared by Build (fit view) and
+// BuildTimeline (the live pinned-timeline view): which lanes exist, their
+// colour, and the time-sorted non-goal entries bucketed onto each. Geometry
+// (X/Y, width, edges) is left to the caller since the two views place nodes
+// differently.
+type laneLayout struct {
+	lanes      []Lane
+	buckets    [][]domain.Entry // non-goal entries per lane, OccurredAt-asc
+	goalToLane map[string]int
+}
+
+// assignLanes runs steps 1-3 of the layout: one lane per goal (title-asc for
+// determinism), each non-goal entry homed on its alphabetically-first part_of
+// goal (orphans share the lowest lane), then bucketed + time-sorted per lane.
+// relates_to / blocks / derived_from / iteration_of never drive lane home —
+// they surface later as cross-lane edges.
+func assignLanes(entries []domain.Entry, edges []domain.Edge) laneLayout {
+	goals := []domain.Entry{}
+	for _, e := range entries {
+		if e.Type == domain.EntryTypeGoal {
+			goals = append(goals, e)
+		}
+	}
+	sort.Slice(goals, func(i, j int) bool { return goals[i].Title < goals[j].Title })
+
+	lanes := make([]Lane, 0, len(goals)+1)
+	goalToLane := make(map[string]int, len(goals))
+	for i := range goals {
+		lanes = append(lanes, Lane{
+			Goal:       &goals[i],
+			ColorIndex: i % len(laneColours),
+		})
+		goalToLane[goals[i].ID] = i
+	}
+	orphanLaneIdx := -1
+
+	goalsOfEntry := make(map[string][]string) // entryID → []goalID
+	for _, e := range edges {
+		if e.Relation != domain.RelationPartOf {
+			continue
+		}
+		if _, isGoal := goalToLane[e.ToID]; !isGoal {
+			continue
+		}
+		goalsOfEntry[e.FromID] = append(goalsOfEntry[e.FromID], e.ToID)
+	}
+
+	entryLane := make(map[string]int, len(entries))
+	for _, e := range entries {
+		if e.Type == domain.EntryTypeGoal {
+			entryLane[e.ID] = goalToLane[e.ID]
+			continue
+		}
+		homeGoals := goalsOfEntry[e.ID]
+		if len(homeGoals) == 0 {
+			if orphanLaneIdx == -1 {
+				orphanLaneIdx = len(lanes)
+				lanes = append(lanes, Lane{
+					Goal:       nil,
+					ColorIndex: len(laneColours), // ".lane-orphan" in CSS
+				})
+			}
+			entryLane[e.ID] = orphanLaneIdx
+			continue
+		}
+		sort.Strings(homeGoals)
+		entryLane[e.ID] = goalToLane[homeGoals[0]]
+	}
+
+	buckets := make([][]domain.Entry, len(lanes))
+	for _, e := range entries {
+		if e.Type == domain.EntryTypeGoal {
+			continue // goals render as the lane anchor, not as a bucket entry
+		}
+		buckets[entryLane[e.ID]] = append(buckets[entryLane[e.ID]], e)
+	}
+	for li := range buckets {
+		sort.Slice(buckets[li], func(i, j int) bool {
+			return buckets[li][i].OccurredAt.Before(buckets[li][j].OccurredAt)
+		})
+	}
+
+	return laneLayout{lanes: lanes, buckets: buckets, goalToLane: goalToLane}
+}
+
+// buildTimeAxis places up to axisTickCount evenly-spaced ticks across the
+// usable horizontal band, matching the same MarginLeft..MarginLeft+usableW
+// range the entry dots are mapped onto. Returns nil when the time axis is
+// off (even spacing) so the template draws nothing. Labels collapse to
+// HH:MM for intraday spans and MM-DD once the range covers a day or more.
+func buildTimeAxis(on bool, minT, maxT time.Time, usableW float64) ([]AxisTick, float64, float64) {
+	if !on || minT.IsZero() || maxT.IsZero() {
+		return nil, 0, 0
+	}
+	span := maxT.Sub(minT)
+	layoutFmt := "15:04"
+	if span >= 24*time.Hour {
+		layoutFmt = "01-02"
+	}
+	n := axisTickCount
+	ticks := make([]AxisTick, 0, n)
+	for i := 0; i < n; i++ {
+		frac := float64(i) / float64(n-1)
+		t := minT.Add(time.Duration(float64(span) * frac))
+		ticks = append(ticks, AxisTick{
+			X:     MarginLeft + frac*usableW,
+			Label: t.UTC().Format(layoutFmt),
+		})
+	}
+	return ticks, ticks[0].X, ticks[len(ticks)-1].X
 }

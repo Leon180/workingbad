@@ -3,6 +3,7 @@ package web
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/Leon180/workingbad/internal/domain"
@@ -60,25 +61,46 @@ func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	canvas := layout.Build(entries, edges)
+	// Timeline density (px-per-day) comes from ?ppd= so the client's zoom
+	// control can re-request at a new density via htmx; BuildTimeline clamps
+	// it. The graph lands at DefaultPxPerDay, then the client measures the
+	// viewport and fits-to-width on load.
+	canvas := layout.BuildTimeline(entries, edges, parsePpd(r.URL.Query().Get("ppd")))
 
 	s.renderPage(w, r, "graph.html", graphData{
-		Title:      "workingbad — graph",
-		Canvas:     canvas,
-		ActiveAt:   atStr,
-		AsOf:       asOf,
-		AtParseErr: asOfErrString(atStr, asOfErr),
-		ActiveRepo: repoID,
-		EmptyHint:  len(entries) == 0,
+		Title:           "workingbad — graph",
+		Canvas:          canvas,
+		ActiveAt:        atStr,
+		AsOf:            asOf,
+		AtParseErr:      asOfErrString(atStr, asOfErr),
+		ActiveRepo:      repoID,
+		EmptyHint:       len(entries) == 0,
+		MaterializedNum: r.URL.Query().Get("materialized"),
+		FailedNum:       r.URL.Query().Get("failed"),
 	})
 }
 
+// parsePpd reads the px-per-day zoom density from the query string. Empty or
+// unparseable falls back to the default; layout.BuildTimeline clamps range.
+func parsePpd(s string) float64 {
+	if s == "" {
+		return layout.DefaultPxPerDay
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return layout.DefaultPxPerDay
+	}
+	return v
+}
+
 type graphData struct {
-	Title      string
-	Canvas     layout.Canvas
-	ActiveAt   string
-	AsOf       time.Time
-	AtParseErr string
-	ActiveRepo string
-	EmptyHint  bool
+	Title           string
+	Canvas          layout.Canvas
+	ActiveAt        string
+	AsOf            time.Time
+	AtParseErr      string
+	ActiveRepo      string
+	EmptyHint       bool
+	MaterializedNum string // ?materialized=N flash after /materialize POST → toast
+	FailedNum       string // ?failed=N companion to MaterializedNum
 }
