@@ -176,8 +176,11 @@ func TestLabels_400_OnLabelEqualsPrimary(t *testing.T) {
 	}
 }
 
-// TestLabels_404_OnUnknownEntry — POST + GET both route to 404 via
-// statusFor(ErrNotFound) for non-existent entry ids.
+// TestLabels_404_OnUnknownEntry — both POST and GET surface a 404 for
+// non-existent entry ids. The GET path used to return 200 + [], which
+// leaked the endpoint as an existence probe for fabricated ids and
+// broke REST semantics; fixed by checking entry existence in
+// GetLabels at the service layer.
 func TestLabels_404_OnUnknownEntry(t *testing.T) {
 	srv := newTestServer(t)
 	unknownID := "0192f6c0-7e31-7c2b-9b8a-ffffffffffff"
@@ -187,25 +190,37 @@ func TestLabels_404_OnUnknownEntry(t *testing.T) {
 		t.Errorf("POST status = %d, want 404", rec.Code)
 	}
 
-	// GET against a missing entry returns 200 + []  — GetLabels doesn't
-	// distinguish "missing" from "no labels" at the service layer, and
-	// upgrading it for one HTTP shape would be over-engineering. The
-	// guarantee is: SetLabels rejects unknown ids (POST is the only
-	// surface that can mutate state from this address space).
 	rec = getLabels(t, srv, unknownID)
-	if rec.Code != http.StatusOK {
-		t.Errorf("GET status = %d, want 200 (empty labels for unknown entry)", rec.Code)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("GET status = %d, want 404", rec.Code)
 	}
 }
 
-// TestLabels_400_OnUnsupportedContentType — explicit XML or similar
-// gets rejected at the body decoder rather than silently treated as a form.
-func TestLabels_400_OnUnsupportedContentType(t *testing.T) {
+// TestLabels_415_OnUnsupportedContentType — explicit XML or similar
+// gets rejected with 415 (Unsupported Media Type) as the HTTP spec
+// requires; 400 would conflate "wrong format" with "bad body".
+func TestLabels_415_OnUnsupportedContentType(t *testing.T) {
 	srv := newTestServer(t)
 	ctx := context.Background()
 	e := seedEntry(t, srv, ctx, domain.EntryTypeActivity, "bad ct")
 
 	rec := postLabels(t, srv, e.ID, "application/xml", `<labels></labels>`)
+	if rec.Code != http.StatusUnsupportedMediaType {
+		t.Errorf("status = %d, want 415", rec.Code)
+	}
+}
+
+// TestLabels_400_OnEmptyJSONBody — empty body on the JSON path is no
+// longer treated as "clear all" (the ContentLength==0 shortcut was
+// unsafe under chunked transfer encoding where ContentLength is -1
+// even when a body is present). Clearing labels now requires an
+// explicit {"labels":[]}.
+func TestLabels_400_OnEmptyJSONBody(t *testing.T) {
+	srv := newTestServer(t)
+	ctx := context.Background()
+	e := seedEntry(t, srv, ctx, domain.EntryTypeActivity, "empty body")
+
+	rec := postLabels(t, srv, e.ID, "application/json", "")
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}

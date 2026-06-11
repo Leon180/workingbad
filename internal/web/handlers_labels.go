@@ -2,12 +2,19 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/Leon180/workingbad/internal/domain"
 )
+
+// errUnsupportedContentType signals that readLabelsBody rejected the
+// request's Content-Type. Caller maps it to 415; any other readLabelsBody
+// error (malformed JSON, parse-form failure) is a 400.
+var errUnsupportedContentType = errors.New("unsupported content-type")
 
 // labelsBody is the request shape both content types reduce to. JSON
 // callers send {"labels": [...]} explicitly; form callers send any
@@ -17,9 +24,9 @@ type labelsBody struct {
 }
 
 // handleGetLabels returns the secondary-label set for the entry as a
-// JSON array, alphabetical. Empty for entries with no labels — never
-// 404 for "no labels" (use the dedicated Not Found mapping for unknown
-// entries).
+// JSON array, alphabetical. Empty for entries that exist but carry no
+// labels; 404 when the entry id is unknown (so this endpoint can't be
+// abused as an existence probe for fabricated ids).
 //
 // Route: GET /entries/{id}/labels
 func (s *Server) handleGetLabels(w http.ResponseWriter, r *http.Request) {
@@ -72,13 +79,17 @@ func (s *Server) handleSetLabels(w http.ResponseWriter, r *http.Request) {
 
 	rawLabels, err := readLabelsBody(r)
 	if err != nil {
+		if errors.Is(err, errUnsupportedContentType) {
+			http.Error(w, err.Error(), http.StatusUnsupportedMediaType)
+			return
+		}
 		http.Error(w, fmt.Sprintf("bad body: %v", err), http.StatusBadRequest)
 		return
 	}
 
 	labels := make([]domain.EntryType, 0, len(rawLabels))
 	for _, l := range rawLabels {
-		labels = append(labels, domain.EntryType(strings.TrimSpace(l)))
+		labels = append(labels, domain.EntryType(l))
 	}
 
 	if err := s.svc.SetLabels(r.Context(), entryID, labels); err != nil {
@@ -86,18 +97,13 @@ func (s *Server) handleSetLabels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read back so the response matches what's actually persisted (the
-	// validator may have re-ordered or applied future invariants we
-	// haven't surfaced yet). Costs one extra SELECT; worth it for the
-	// honest "what did the server keep?" round-trip.
-	persisted, err := s.svc.GetLabels(r.Context(), entryID)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("read back: %v", err), statusFor(err))
-		return
-	}
-	if persisted == nil {
-		persisted = []domain.EntryType{}
-	}
+	// SetLabels is the canonical write — anything it accepted is what's
+	// persisted, in the same alphabetical order GetLabels would return.
+	// Avoid the read-back round-trip (which previously hid a 500 path
+	// when GetLabels failed after a successful Set, leaving the client
+	// without a response body confirming the mutation).
+	persisted := append([]domain.EntryType{}, labels...)
+	sort.Slice(persisted, func(i, j int) bool { return persisted[i] < persisted[j] })
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if err := json.NewEncoder(w).Encode(persisted); err != nil {
@@ -106,7 +112,10 @@ func (s *Server) handleSetLabels(w http.ResponseWriter, r *http.Request) {
 }
 
 // readLabelsBody decodes either content type into the same string list.
-// Empty body → empty slice (clear-all is a legitimate operation).
+// "Clear all" requires an explicit `{"labels":[]}` on the JSON path or
+// a POST with no `labels=` field on the form path — empty bodies are
+// rejected at the decoder so a chunked-transfer mistake (ContentLength
+// reports -1, body is real) can't silently nuke the set.
 func readLabelsBody(r *http.Request) ([]string, error) {
 	ct := r.Header.Get("Content-Type")
 	// Strip params like "; charset=utf-8" before comparing.
@@ -116,12 +125,6 @@ func readLabelsBody(r *http.Request) ([]string, error) {
 	switch ct {
 	case "application/json":
 		var body labelsBody
-		// Empty body decodes to zero-value labelsBody{Labels: nil},
-		// which translates downstream to "clear all". Reject only
-		// malformed JSON (mid-stream syntax errors).
-		if r.ContentLength == 0 {
-			return nil, nil
-		}
 		dec := json.NewDecoder(r.Body)
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&body); err != nil {
@@ -135,6 +138,6 @@ func readLabelsBody(r *http.Request) ([]string, error) {
 		}
 		return r.PostForm["labels"], nil
 	default:
-		return nil, fmt.Errorf("unsupported content-type: %q", ct)
+		return nil, fmt.Errorf("%w: %q", errUnsupportedContentType, ct)
 	}
 }

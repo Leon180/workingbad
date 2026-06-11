@@ -117,8 +117,22 @@ func (s *Service) SetLabels(ctx context.Context, entryID string, labels []domain
 
 // GetLabels returns the secondary-label set for an entry. Order is
 // alphabetic-stable for deterministic rendering. Empty slice for an
-// entry with no secondaries.
+// entry that exists but carries no secondaries; ErrNotFound when the
+// id doesn't resolve to any entry row — without that distinction,
+// callers (HTTP, CLI) couldn't tell "no labels yet" from "fabricated
+// id", which leaks the endpoint as an existence probe and breaks REST
+// semantics for the HTTP wrapper.
 func (s *Service) GetLabels(ctx context.Context, entryID string) ([]domain.EntryType, error) {
+	var exists int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT 1 FROM entries WHERE id = ? LIMIT 1`, entryID).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("%w: entry %s", ErrNotFound, entryID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("repository: lookup entry %s: %w", entryID, err)
+	}
+
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT label FROM entry_labels WHERE entry_id = ? ORDER BY label`,
 		entryID)
