@@ -47,6 +47,13 @@ jobs:
         # under ~10min.
         # -run=^$ skips Test* functions (we only want bench data here;
         # the regular test job covers correctness).
+        #
+        # Stdout-only: stderr (goose migration log) used to interleave
+        # with the benchmark output via 2>&1, producing lines like
+        #   "BenchmarkInsertEntry-4 ... 2026/06/11 12:37:09 OK 0001_*"
+        # which benchstat tries to parse and dies on. Keep stderr at the
+        # console (CI shows it in the live log), only stdout hits the
+        # artifact.
         run: |
           go test \
             -bench=. \
@@ -57,7 +64,7 @@ jobs:
             ./internal/repository/ \
             ./internal/web/ \
             ./internal/web/layout/ \
-            > bench.txt 2>&1
+            > bench.txt
 
       - name: upload result as artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -135,7 +142,14 @@ jobs:
         if: steps.baseline.outcome == 'success' || steps.baseline-fallback.outputs.found == 'true'
         run: |
           set -euo pipefail
-          benchstat ./main/bench.txt ./pr/bench.txt | tee /tmp/diff.txt
+          # Defend against older main artifacts that captured stderr —
+          # strip goose-log lines so benchstat sees only "BenchmarkX ..."
+          # rows. New runs upload clean stdout-only files so this is a
+          # belt-and-suspenders; without it, a stale baseline crashes
+          # the compare with "parsing iteration count: invalid syntax".
+          grep -vE '^[0-9]{4}/[0-9]{2}/[0-9]{2}|^goose:' ./main/bench.txt > ./main/bench-clean.txt
+          grep -vE '^[0-9]{4}/[0-9]{2}/[0-9]{2}|^goose:' ./pr/bench.txt   > ./pr/bench-clean.txt
+          benchstat ./main/bench-clean.txt ./pr/bench-clean.txt | tee /tmp/diff.txt
           # benchstat's "ok" output has no rows with significance > p=0.05;
           # any "geomean" delta worse than +5% is a regression.
           # The standard parse: count lines containing "+N%" where N>=5
