@@ -109,9 +109,41 @@ That dumps the EXPLAIN QUERY PLAN output for the failing case. If the index name
 
 Earlier we had a golden test that asserted `mustContain []string{"idx_entries_type_current", ...}` per case. SQLite explicitly does NOT guarantee EXPLAIN format stability across versions, so the moment we bumped `modernc.org/sqlite` we would have been chasing diff churn that wasn't a real perf regression. The loose-match + this doc give us the same coverage with zero version-tax.
 
+## Load test (`make load-test`)
+
+End-to-end latency under sustained request injection, separate from `testing.B` because vegeta's constant-rate model is the only way to surface SQLite single-writer write-lock contention reliably (concurrent-user models collapse to the ceiling and lie about latency).
+
+```bash
+make load-test                                # local; uses port 7891
+make load-test PORT=7892                      # if 7891 is busy
+P99_READ_MS=300 make load-test                # bump the read gate
+```
+
+Four scenarios, each constant-rate vegeta `attack`:
+
+| # | scenario | shape | gate |
+|---|---|---|---|
+| 1 | read-heavy | `GET /?type=goal` @ 200 req/s × 10s | p99 < 200ms (**hard**) |
+| 2 | mixed | alternating `GET /?type=goal` + `POST /new/research` @ 50 req/s × 10s | advisory |
+| 3 | write storm | `POST /new/research` (unique payloads) @ 100 req/s × 5s | advisory |
+| 4 | graph | `GET /graph` @ 50 req/s × 10s | p99 < 500ms (**hard**) |
+
+Write/mixed are advisory because the SQLite single-writer ceiling is a known constraint we're not trying to gate per-PR — we surface the latency for diagnosis, but we don't fail a build when it's the SQLite-shaped truth.
+
+Reference run (Apple M5, Go 1.25.11, modernc.org/sqlite v1.34.0):
+
+```
+scenario   shape                       p50       p99   success  gate
+read       200 req/s × 10s           1.2ms     2.3ms   100.00%  OK  <200ms
+mixed       50 req/s × 10s           1.7ms     3.2ms   100.00%  advisory
+write      100 req/s × 5s            1.8ms     3.9ms   100.00%  advisory
+graph       50 req/s × 10s           8.1ms    12.2ms   100.00%  OK  <500ms
+```
+
+CI: `.github/workflows/load-test.yml` is `workflow_dispatch`-only — run it on-demand before merging anything that touches the request path or the repository hot queries. Result JSON + server log are archived as workflow artifacts for trend tracking.
+
 ## What we deliberately don't measure (yet)
 
-- **End-to-end latency** under realistic load: separate issue (#30) for Vegeta-driven load test
 - **Memory leaks** over long uptime: out of scope for dogfood phase
 - **CPU profile during real work**: covered by `--debug` pprof flag (#29) on-demand
 
