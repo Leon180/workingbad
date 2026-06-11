@@ -1,4 +1,4 @@
-.PHONY: build test test-race test-cov lint fmt tidy clean run ci ci-migration-gates ci-sqlc migrate-new sqlc sqlc-diff serve init-config serve-smoke serve-port stop-serve
+.PHONY: build test test-race test-cov lint fmt tidy clean run ci ci-migration-gates ci-sqlc migrate-new sqlc sqlc-diff serve init-config serve-smoke serve-port stop-serve load-test
 
 BINARY := workingbad
 PKG := ./...
@@ -110,3 +110,25 @@ serve-port: build
 # stop-serve — kill whatever is listening on the default port.
 stop-serve:
 	@lsof -nP -iTCP:$(DEFAULT_PORT) -sTCP:LISTEN -t | xargs -r kill || true
+
+# load-test — Vegeta-driven load harness (issue #30).
+#
+# Spins up workingbad serve against a temp DB, fires 4 constant-rate
+# scenarios at it, prints a latency summary, exits non-zero if either
+# the read p99 (>200ms) or graph p99 (>500ms) gate is breached.
+# Write/mixed scenarios are advisory — the SQLite single-writer ceiling
+# is a known constraint, surfaced for diagnosis not as a hard gate.
+#
+# Usage:
+#   make load-test                # uses port 7891 by default
+#   make load-test PORT=7892      # if 7891 is busy
+#   P99_READ_MS=300 make load-test  # bump the read gate
+#
+# Vegeta is installed lazily — if missing, run `go install
+# github.com/tsenart/vegeta/v12@latest`.
+load-test: build
+	@command -v vegeta >/dev/null || ( \
+		echo "vegeta not installed. installing…"; \
+		go install github.com/tsenart/vegeta/v12@latest \
+	)
+	@BIN=./$(BINARY) PORT=$(PORT) bash scripts/load-test/run.sh

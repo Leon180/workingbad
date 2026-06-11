@@ -47,6 +47,14 @@ jobs:
         # under ~10min.
         # -run=^$ skips Test* functions (we only want bench data here;
         # the regular test job covers correctness).
+        #
+        # Stderr (goose migration log) used to interleave with the
+        # benchmark output via 2>&1, producing lines like
+        #   "BenchmarkInsertEntry-4 ... 2026/06/11 12:37:09 OK 0001_*"
+        # which benchstat tries to parse and dies on. Pipe stdout
+        # through `tee` so the live CI log shows benchmark progress as
+        # it streams AND bench.txt stays stderr-free. stderr still
+        # surfaces in the CI log (it just doesn't pollute the file).
         run: |
           go test \
             -bench=. \
@@ -57,7 +65,7 @@ jobs:
             ./internal/repository/ \
             ./internal/web/ \
             ./internal/web/layout/ \
-            > bench.txt 2>&1
+            | tee bench.txt
 
       - name: upload result as artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -69,7 +77,10 @@ jobs:
           retention-days: 30
 
       - name: print result to log (always)
-        run: cat bench.txt
+        # Redundant when `tee` above succeeds; kept so a `set -e` exit
+        # mid-bench still leaves the partial bench.txt visible.
+        if: always()
+        run: cat bench.txt || true
 
   regression-check:
     name: "bench: regression check"
@@ -95,32 +106,22 @@ jobs:
           name: bench-pr-${{ github.event.pull_request.number }}
           path: ./pr
 
-      - name: try to download main baseline from latest main run
+      - name: download main baseline
         id: baseline
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: bench-main
-          path: ./main
-          # When this repo has never had a main run yet, download fails
-          # and continue-on-error keeps the workflow alive. The compare
-          # step then short-circuits to "no baseline yet".
-          run-id: ${{ github.event.repository.default_branch && github.event.before || '' }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-        continue-on-error: true
-
-      - name: also try downloading main baseline by name across repo workflows
-        if: steps.baseline.outcome == 'failure'
-        id: baseline-fallback
+        # `actions/download-artifact` only sees artifacts of the current
+        # workflow run by default. The previous version of this job
+        # tried it first (always failed on PRs with a scary
+        # ##[error]Unable to download artifact(s): Not Found) and only
+        # then ran the gh-api fallback — confusing in the UI. Skip the
+        # red herring: go straight through the GitHub API for the
+        # latest `bench-main` across all runs of this workflow.
         run: |
-          # The artifact API only finds artifacts in the same workflow run
-          # by default. Use the GitHub API to find the latest bench-main
-          # artifact across all runs of this workflow on main.
           set -euo pipefail
           ARTIFACT_URL=$(gh api \
             "/repos/${{ github.repository }}/actions/artifacts?name=bench-main&per_page=1" \
             --jq '.artifacts[0].archive_download_url // empty')
           if [ -z "$ARTIFACT_URL" ]; then
-            echo "no main baseline artifact found — first PR ever, or main hasn't run yet"
+            echo "::notice::no main baseline artifact found — first PR ever, or main hasn't run yet"
             echo "found=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -132,10 +133,17 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: benchstat compare
-        if: steps.baseline.outcome == 'success' || steps.baseline-fallback.outputs.found == 'true'
+        if: steps.baseline.outputs.found == 'true'
         run: |
           set -euo pipefail
-          benchstat ./main/bench.txt ./pr/bench.txt | tee /tmp/diff.txt
+          # Defend against older main artifacts that captured stderr —
+          # strip goose-log lines so benchstat sees only "BenchmarkX ..."
+          # rows. New runs upload clean stdout-only files so this is a
+          # belt-and-suspenders; without it, a stale baseline crashes
+          # the compare with "parsing iteration count: invalid syntax".
+          grep -vE '^[0-9]{4}/[0-9]{2}/[0-9]{2}|^goose:' ./main/bench.txt > ./main/bench-clean.txt
+          grep -vE '^[0-9]{4}/[0-9]{2}/[0-9]{2}|^goose:' ./pr/bench.txt   > ./pr/bench-clean.txt
+          benchstat ./main/bench-clean.txt ./pr/bench-clean.txt | tee /tmp/diff.txt
           # benchstat's "ok" output has no rows with significance > p=0.05;
           # any "geomean" delta worse than +5% is a regression.
           # The standard parse: count lines containing "+N%" where N>=5
@@ -159,7 +167,7 @@ jobs:
           fi
 
       - name: no baseline yet (bootstrap)
-        if: steps.baseline.outcome == 'failure' && steps.baseline-fallback.outputs.found != 'true'
+        if: steps.baseline.outputs.found != 'true'
         run: |
           echo "::notice::No main baseline artifact yet. This run records the first one."
           echo "Compare will activate on the next PR after this one merges."

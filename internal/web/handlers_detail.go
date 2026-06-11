@@ -182,24 +182,31 @@ type attachedActivity struct {
 }
 
 // collectAttached pairs each activity returned by GetGoalActivities with
-// its live part_of edge id. Cheap because the edges-by-from query is
-// indexed and the activity set is bounded.
+// its live part_of edge id. One EdgesAt round-trip per page render
+// (issue #12): fetch every part_of edge pointing at this goal once,
+// index by from_id, then look up per activity in Go.
 func (s *Server) collectAttached(ctx context.Context, goal domain.Entry, activities []domain.Entry) ([]attachedActivity, error) {
+	edges, err := s.svc.EdgesAt(ctx, time.Now().UTC(),
+		repository.EdgeFilter{Relation: domain.RelationPartOf, ToID: goal.ID})
+	if err != nil {
+		return nil, err
+	}
+	// from_id -> live edge id. The EdgesAt result is bounded by the
+	// number of part_of edges into this single goal, so the map cost
+	// is O(edges) for the build and O(1) per activity lookup.
+	byFrom := make(map[string]string, len(edges))
+	for _, e := range edges {
+		if !e.IsCurrent {
+			continue
+		}
+		if _, seen := byFrom[e.FromID]; seen {
+			continue
+		}
+		byFrom[e.FromID] = e.ID
+	}
 	out := make([]attachedActivity, 0, len(activities))
 	for _, a := range activities {
-		edges, err := s.svc.EdgesAt(ctx, time.Now().UTC(),
-			repository.EdgeFilter{Relation: domain.RelationPartOf, FromID: a.ID, ToID: goal.ID})
-		if err != nil {
-			return nil, err
-		}
-		edgeID := ""
-		for _, e := range edges {
-			if e.IsCurrent {
-				edgeID = e.ID
-				break
-			}
-		}
-		out = append(out, attachedActivity{Activity: a, EdgeID: edgeID})
+		out = append(out, attachedActivity{Activity: a, EdgeID: byFrom[a.ID]})
 	}
 	return out, nil
 }

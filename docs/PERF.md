@@ -75,6 +75,73 @@ Pre-merge: a PR that introduces a real regression visibly fails the `bench: regr
 
 Override: if a slowdown is intentional (e.g. necessary for correctness), explain in the PR description and request reviewer override. There is no `[bench: skip]` magic — the principle is "every regression is at least acknowledged".
 
+## Query Plan Reference
+
+For every hot SELECT in the bitemporal layer we lock the expected access path here. The actual test (`TestSlowQueries_AssertNoFullTableScan` in `internal/repository/queries_temporal_plan_test.go`) only asserts that **some** `USING INDEX` / `USING COVERING INDEX` / `USING PRIMARY KEY` token appears AND no bare `SCAN entries` / `SCAN edges` row sneaks in — that's the regression signal we actually care about, and it stays durable across SQLite version bumps that would tank a golden-match test.
+
+The names below are documentation only — if the planner picks a different index that's still index-driven on the hot table, the test passes and you only need to update this doc to track the change.
+
+Last verified: SQLite via `modernc.org/sqlite` v1.34.0 (Go 1.25.11). Re-verify only when:
+
+- a hot-table migration adds/drops/changes an index, OR
+- you bump `modernc.org/sqlite` to a new minor version, OR
+- a hot query's WHERE / FROM shape changes
+
+### Hot queries
+
+| Query | Where it lives | Expected access path | Forbidden access path |
+|---|---|---|---|
+| **ListEntriesAt** — bitemporal goal lookup | `internal/repository/queries_temporal.go` | `SEARCH e USING INDEX idx_entries_type_current` (type=?) | `SCAN entries` |
+| **EntryHistory** — chain walk by logical_id | `internal/repository/queries_temporal.go` | `SEARCH entries USING INDEX idx_entries_logical_id` (logical_id=?) | `SCAN entries` |
+| **EdgesAt — from-side** live edge fetch | `internal/repository/queries_temporal.go` | `SEARCH edges USING INDEX idx_edges_from_occurred_live` (from_id=?) | `SCAN edges` |
+| **EdgesAt — to-side** live edge fetch | `internal/repository/queries_temporal.go` | `SEARCH edges USING INDEX idx_edges_to_occurred_live` (to_id=?) | `SCAN edges` |
+| **Idempotency lookup** — fetched-event dedupe | `internal/repository/queries.go::GetEntryByLogicalIDAndHash` | `SEARCH entries USING INDEX idx_entries_source_event_hash` (logical_id=? AND source_event_hash=?) | `SCAN entries` |
+
+### How to re-verify by hand
+
+```bash
+go test -run 'TestSlowQueries_AssertNoFullTableScan/<sub-name>' -v ./internal/repository/
+```
+
+That dumps the EXPLAIN QUERY PLAN output for the failing case. If the index name has just been renamed (e.g. by a migration), update both the table above and the table in `internal/repository/queries_temporal_plan_test.go` and re-run. The test should pass on the new index without code changes if it's still index-driven.
+
+### What this replaces
+
+Earlier we had a golden test that asserted `mustContain []string{"idx_entries_type_current", ...}` per case. SQLite explicitly does NOT guarantee EXPLAIN format stability across versions, so the moment we bumped `modernc.org/sqlite` we would have been chasing diff churn that wasn't a real perf regression. The loose-match + this doc give us the same coverage with zero version-tax.
+
+## Load test (`make load-test`)
+
+End-to-end latency under sustained request injection, separate from `testing.B` because vegeta's constant-rate model is the only way to surface SQLite single-writer write-lock contention reliably (concurrent-user models collapse to the ceiling and lie about latency).
+
+```bash
+make load-test                                # local; uses port 7891
+make load-test PORT=7892                      # if 7891 is busy
+P99_READ_MS=300 make load-test                # bump the read gate
+```
+
+Four scenarios, each constant-rate vegeta `attack`:
+
+| # | scenario | shape | gate |
+|---|---|---|---|
+| 1 | read-heavy | `GET /?type=goal` @ 200 req/s × 10s | p99 < 200ms (**hard**) |
+| 2 | mixed | alternating `GET /?type=goal` + `POST /new/research` @ 50 req/s × 10s | advisory |
+| 3 | write storm | `POST /new/research` (unique payloads) @ 100 req/s × 5s | advisory |
+| 4 | graph | `GET /graph` @ 50 req/s × 10s | p99 < 500ms (**hard**) |
+
+Write/mixed are advisory because the SQLite single-writer ceiling is a known constraint we're not trying to gate per-PR — we surface the latency for diagnosis, but we don't fail a build when it's the SQLite-shaped truth.
+
+Reference run (Apple M5, Go 1.25.11, modernc.org/sqlite v1.34.0):
+
+```
+scenario   shape                       p50       p99   success  gate
+read       200 req/s × 10s           1.2ms     2.3ms   100.00%  OK  <200ms
+mixed       50 req/s × 10s           1.7ms     3.2ms   100.00%  advisory
+write      100 req/s × 5s            1.8ms     3.9ms   100.00%  advisory
+graph       50 req/s × 10s           8.1ms    12.2ms   100.00%  OK  <500ms
+```
+
+CI: `.github/workflows/load-test.yml` is `workflow_dispatch`-only — run it on-demand before merging anything that touches the request path or the repository hot queries. Result JSON + server log are archived as workflow artifacts for trend tracking.
+
 ## On-demand profiling (`workingbad serve --debug`)
 
 When you actually need to see "where is the binary spending CPU / allocating / blocking right now", start the server with `--debug`:

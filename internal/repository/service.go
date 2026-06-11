@@ -68,6 +68,9 @@ func (s *Service) InsertEntry(ctx context.Context, e domain.Entry) (domain.Entry
 	}); err != nil {
 		return domain.Entry{}, fmt.Errorf("repository: fts insert: %w", err)
 	}
+	if err := insertSourceRefAliasTx(ctx, tx, e.ID, e.Source, e.SourceRef); err != nil {
+		return domain.Entry{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return domain.Entry{}, fmt.Errorf("repository: commit: %w", err)
 	}
