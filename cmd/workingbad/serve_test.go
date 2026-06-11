@@ -3,58 +3,47 @@ package main
 import (
 	"net"
 	"net/http"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
 
 // TestStartPprofServer_BindsToLoopbackOnly proves the pprof debug
-// surface is unreachable from any non-loopback interface even when
-// --debug is on. This is the security-critical invariant: pprof
-// exposes goroutine stacks, allocations, and live profiling; it must
-// never leave the machine.
+// surface is bound to 127.0.0.1 only. This is the security-critical
+// invariant: pprof exposes goroutine stacks, allocations, and live
+// profiling; it must never leave the machine.
+//
+// The original "try to bind 0.0.0.0:port and expect success" approach
+// fails on Linux, where INADDR_ANY overlaps the explicit 127.0.0.1
+// bind (different from macOS's looser semantics). We instead read the
+// listener's actual bound address — the Go stdlib can't lie about
+// what it bound to.
 func TestStartPprofServer_BindsToLoopbackOnly(t *testing.T) {
 	port := freePort(t)
-	stop, err := startPprofServer(port)
+	addr, stop, err := startPprofServer(port)
 	if err != nil {
 		t.Fatalf("startPprofServer: %v", err)
 	}
 	defer stop()
 
-	// Probe the loopback address — should return 200.
-	resp, err := httpGet("http://127.0.0.1:" + strconv.Itoa(port) + "/debug/pprof/")
+	if !strings.HasPrefix(addr, "127.0.0.1:") {
+		t.Errorf("bound addr = %q, want prefix 127.0.0.1: (loopback-only)", addr)
+	}
+
+	// Sanity: the loopback endpoint actually answers.
+	code, err := httpGet("http://" + addr + "/debug/pprof/")
 	if err != nil {
 		t.Fatalf("loopback probe: %v", err)
 	}
-	if resp != http.StatusOK {
-		t.Errorf("loopback / status = %d, want 200", resp)
-	}
-
-	// listener should be bound to 127.0.0.1, NOT 0.0.0.0. Verify by
-	// trying to dial the same port via a non-loopback IPv4 — should
-	// connect-refuse. (We can't reliably reach the host's primary IP
-	// in tests, so we settle for "the listener.Addr() string starts
-	// with 127.0.0.1:" by re-listening on the same loopback addr,
-	// which would conflict if the binding allowed 0.0.0.0.)
-	conflict, err := net.Listen("tcp4", "127.0.0.1:"+strconv.Itoa(port))
-	if err == nil {
-		_ = conflict.Close()
-		t.Error("could re-bind 127.0.0.1:port → pprof listener wasn't actually using it")
-	}
-	wildcardConflict, err := net.Listen("tcp4", "0.0.0.0:"+strconv.Itoa(port))
-	if err != nil {
-		// If 0.0.0.0:port is busy, pprof was bound 0.0.0.0 (leak).
-		t.Errorf("0.0.0.0:port refused (%v) — pprof might be bound wider than loopback", err)
-	} else {
-		_ = wildcardConflict.Close()
+	if code != http.StatusOK {
+		t.Errorf("loopback / status = %d, want 200", code)
 	}
 }
 
 // TestStartPprofServer_RejectsInvalidPort guards the input validation.
 func TestStartPprofServer_RejectsInvalidPort(t *testing.T) {
 	for _, p := range []int{0, -1, 70000} {
-		if _, err := startPprofServer(p); err == nil {
+		if _, _, err := startPprofServer(p); err == nil {
 			t.Errorf("port=%d: expected error, got nil", p)
 		}
 	}
@@ -64,13 +53,13 @@ func TestStartPprofServer_RejectsInvalidPort(t *testing.T) {
 // pprof endpoints to confirm they're wired up, not just /debug/pprof/.
 func TestStartPprofServer_PprofEndpointsRespond(t *testing.T) {
 	port := freePort(t)
-	stop, err := startPprofServer(port)
+	addr, stop, err := startPprofServer(port)
 	if err != nil {
 		t.Fatalf("startPprofServer: %v", err)
 	}
 	defer stop()
 
-	base := "http://127.0.0.1:" + strconv.Itoa(port)
+	base := "http://" + addr
 	for _, path := range []string{
 		"/debug/pprof/",
 		"/debug/pprof/cmdline",

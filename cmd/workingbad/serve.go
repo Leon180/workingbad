@@ -52,7 +52,7 @@ func actionServe(_ context.Context, c *cli.Command) error {
 	defer cancel()
 
 	if c.Bool("debug") {
-		stop, err := startPprofServer(int(c.Int("debug-port")))
+		_, stop, err := startPprofServer(int(c.Int("debug-port")))
 		if err != nil {
 			return fmt.Errorf("debug: %w", err)
 		}
@@ -69,17 +69,19 @@ func actionServe(_ context.Context, c *cli.Command) error {
 // data — none of which should leave the machine. Listener is opened
 // up-front so we can fail fast if the port is busy.
 //
-// The returned stop func triggers a graceful shutdown with a small
-// drain window.
-func startPprofServer(port int) (func(), error) {
+// Returns the bound address (so tests can verify it's loopback-only)
+// alongside the stop func, which triggers a graceful shutdown with a
+// small drain window.
+func startPprofServer(port int) (string, func(), error) {
 	if port <= 0 || port > 65535 {
-		return nil, fmt.Errorf("debug-port out of range: %d", port)
+		return "", nil, fmt.Errorf("debug-port out of range: %d", port)
 	}
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	listener, err := net.Listen("tcp4", addr)
 	if err != nil {
-		return nil, fmt.Errorf("debug listen %s: %w", addr, err)
+		return "", nil, fmt.Errorf("debug listen %s: %w", addr, err)
 	}
+	boundAddr := listener.Addr().String()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/debug/pprof/", pprof.Index)
@@ -109,5 +111,5 @@ func startPprofServer(port int) (func(), error) {
 		defer cancel()
 		_ = server.Shutdown(shutdownCtx)
 	}
-	return stop, nil
+	return boundAddr, stop, nil
 }
