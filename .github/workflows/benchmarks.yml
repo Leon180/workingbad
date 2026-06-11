@@ -106,32 +106,22 @@ jobs:
           name: bench-pr-${{ github.event.pull_request.number }}
           path: ./pr
 
-      - name: try to download main baseline from latest main run
+      - name: download main baseline
         id: baseline
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: bench-main
-          path: ./main
-          # When this repo has never had a main run yet, download fails
-          # and continue-on-error keeps the workflow alive. The compare
-          # step then short-circuits to "no baseline yet".
-          run-id: ${{ github.event.repository.default_branch && github.event.before || '' }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-        continue-on-error: true
-
-      - name: also try downloading main baseline by name across repo workflows
-        if: steps.baseline.outcome == 'failure'
-        id: baseline-fallback
+        # `actions/download-artifact` only sees artifacts of the current
+        # workflow run by default. The previous version of this job
+        # tried it first (always failed on PRs with a scary
+        # ##[error]Unable to download artifact(s): Not Found) and only
+        # then ran the gh-api fallback — confusing in the UI. Skip the
+        # red herring: go straight through the GitHub API for the
+        # latest `bench-main` across all runs of this workflow.
         run: |
-          # The artifact API only finds artifacts in the same workflow run
-          # by default. Use the GitHub API to find the latest bench-main
-          # artifact across all runs of this workflow on main.
           set -euo pipefail
           ARTIFACT_URL=$(gh api \
             "/repos/${{ github.repository }}/actions/artifacts?name=bench-main&per_page=1" \
             --jq '.artifacts[0].archive_download_url // empty')
           if [ -z "$ARTIFACT_URL" ]; then
-            echo "no main baseline artifact found — first PR ever, or main hasn't run yet"
+            echo "::notice::no main baseline artifact found — first PR ever, or main hasn't run yet"
             echo "found=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -143,7 +133,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: benchstat compare
-        if: steps.baseline.outcome == 'success' || steps.baseline-fallback.outputs.found == 'true'
+        if: steps.baseline.outputs.found == 'true'
         run: |
           set -euo pipefail
           # Defend against older main artifacts that captured stderr —
@@ -177,7 +167,7 @@ jobs:
           fi
 
       - name: no baseline yet (bootstrap)
-        if: steps.baseline.outcome == 'failure' && steps.baseline-fallback.outputs.found != 'true'
+        if: steps.baseline.outputs.found != 'true'
         run: |
           echo "::notice::No main baseline artifact yet. This run records the first one."
           echo "Compare will activate on the next PR after this one merges."
