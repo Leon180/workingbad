@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -48,12 +46,20 @@ func allCommands() []*cli.Command {
 			Description: "Launches the embedded net/http server bound to 127.0.0.1 only. The UI\n" +
 				"shares the same RepositoryService as the CLI, so anything you create here\n" +
 				"is visible there immediately. Press Ctrl-C to drain and stop.\n\n" +
+				"DEBUG:\n" +
+				"  --debug exposes net/http/pprof on 127.0.0.1:<debug-port> for one-shot\n" +
+				"  profiling. Bound to loopback only; off by default. Use:\n" +
+				"    workingbad serve --debug\n" +
+				"    go tool pprof http://127.0.0.1:6060/debug/pprof/profile?seconds=10\n\n" +
 				"EXAMPLES:\n" +
 				"  workingbad serve\n" +
 				"  workingbad serve --port 7890\n" +
+				"  workingbad serve --debug --debug-port 6061\n" +
 				"  workingbad --config ~/.workingbad/config.yaml serve",
 			Flags: []cli.Flag{
 				&cli.IntFlag{Name: "port", Usage: "listen port (overrides web.port from config.yaml; 0 = use config)"},
+				&cli.BoolFlag{Name: "debug", Usage: "expose net/http/pprof on 127.0.0.1:<debug-port> for one-shot profiling"},
+				&cli.IntFlag{Name: "debug-port", Value: 6060, Usage: "loopback port for the pprof endpoints (only used with --debug)"},
 			},
 			Action: actionServe,
 		},
@@ -175,6 +181,22 @@ func allCommands() []*cli.Command {
 				"  workingbad summarize",
 			Action: actionSummarize,
 		},
+		{
+			Name:  "seed-github",
+			Usage: "fetch issues + PRs from a GitHub repo and seed them as truth-source entries (read-only)",
+			Description: "Phase 1 dogfood seeder. Issues become goal entries, PRs become activity\n" +
+				"entries, and \"Closes/Fixes/Resolves #N\" references in PR bodies become\n" +
+				"part_of edges from the PR into the matching goal. Uses `gh auth token`\n" +
+				"if GH_TOKEN env is unset. Read-only against GitHub; never pushes.\n\n" +
+				"EXAMPLES:\n" +
+				"  workingbad seed-github --wipe                       # current repo, wipe local DB first\n" +
+				"  workingbad seed-github --repo OtherOrg/otherrepo",
+			Flags: []cli.Flag{
+				&cli.StringFlag{Name: "repo", Usage: "owner/name (defaults to git remote 'origin' inferred from cwd)"},
+				&cli.BoolFlag{Name: "wipe", Usage: "delete the configured SQLite file before seeding"},
+			},
+			Action: actionSeedGitHub,
+		},
 	}
 }
 
@@ -291,7 +313,7 @@ func actionGoal(ctx context.Context, c *cli.Command) error {
 
 // createManual is the shared body of note / decision / goal.
 func createManual(ctx context.Context, svc *repository.Service, typ domain.EntryType, title, body string, status domain.Status) error {
-	hash := sha256Hex(typ, title, body)
+	hash := domain.SourceRefForManual(typ, title, body)
 	e, err := svc.InsertEntry(ctx, domain.Entry{
 		Type:      typ,
 		Title:     title,
@@ -504,14 +526,4 @@ func printEntries(w io.Writer, entries []domain.Entry) {
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", e.ID, e.Type, status, e.Title)
 	}
 	_ = tw.Flush()
-}
-
-func sha256Hex(typ domain.EntryType, title, body string) string {
-	h := sha256.New()
-	h.Write([]byte(string(typ)))
-	h.Write([]byte{0})
-	h.Write([]byte(title))
-	h.Write([]byte{0})
-	h.Write([]byte(body))
-	return hex.EncodeToString(h.Sum(nil))
 }
