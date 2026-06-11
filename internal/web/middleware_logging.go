@@ -53,22 +53,20 @@ func isLogSkipPath(p string) bool {
 // response).
 type statusCapturingWriter struct {
 	http.ResponseWriter
-	status      int
-	bytes       int
-	wroteHeader bool
+	status int
+	bytes  int
 }
 
 func (w *statusCapturingWriter) WriteHeader(code int) {
 	w.status = code
-	w.wroteHeader = true
 	w.ResponseWriter.WriteHeader(code)
 }
 
 func (w *statusCapturingWriter) Write(b []byte) (int, error) {
-	if !w.wroteHeader {
-		// Match net/http's implicit 200 behaviour for plain Write.
-		w.wroteHeader = true
-	}
+	// status defaults to 200 at construction time; net/http's implicit-200
+	// path therefore yields the right value without us needing to flip
+	// wroteHeader here (nothing downstream reads it again — WriteHeader
+	// can't be called after Write per the stdlib contract).
 	n, err := w.ResponseWriter.Write(b)
 	w.bytes += n
 	return n, err

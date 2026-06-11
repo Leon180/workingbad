@@ -243,6 +243,10 @@ func (s *Server) Serve(ctx context.Context) error {
 		_ = s.httpSrv.Shutdown(shutdownCtx)
 		return nil
 	case err := <-errCh:
+		// errors.Is over == here is idiomatic (avoids the sentinel-
+		// comparison lint warning); the net/http server returns
+		// ErrServerClosed unwrapped today, so == would still work, but
+		// the form survives any future wrapping at zero cost.
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
@@ -252,17 +256,20 @@ func (s *Server) Serve(ctx context.Context) error {
 
 // Close releases the listener if Serve hasn't taken ownership yet. Tests
 // build a Server via NewServer (which binds the listener) without calling
-// Serve, so they need a way to drop the bound port. Idempotent: safe to
-// call after Serve has started, after the listener has already been
-// closed, or twice in a row — net.Listener.Close on an already-closed
-// listener returns a benign "use of closed network connection" we
-// deliberately swallow.
+// Serve, so they need a way to drop the bound port. Idempotent for the
+// expected race: calling Close after Serve has started or twice in a row
+// surfaces as net.ErrClosed, which we swallow so callers can defer Close
+// without state-tracking. Any other listener error (rare — OS-level
+// failure during teardown) propagates so we don't silently lose signal.
 func (s *Server) Close() error {
 	if s.listener == nil {
 		return nil
 	}
-	_ = s.listener.Close()
-	return nil
+	err := s.listener.Close()
+	if err == nil || errors.Is(err, net.ErrClosed) {
+		return nil
+	}
+	return err
 }
 
 // parseTemplates returns one parsed template set per page. Each set
