@@ -105,6 +105,8 @@ func NewServer(svc *repository.Service, cfg config.Web) (*Server, error) {
 	s.mux.HandleFunc("POST /goals/{id}/status", s.handleGoalStatus)
 	s.mux.HandleFunc("POST /goals/{id}/attach", s.handleGoalAttach)
 	s.mux.HandleFunc("POST /edges/{id}/detach", s.handleEdgeDetach)
+	s.mux.HandleFunc("GET /entries/{id}/labels", s.handleGetLabels)
+	s.mux.HandleFunc("POST /entries/{id}/labels", s.handleSetLabels)
 	s.mux.HandleFunc("POST /materialize", s.handleMaterialize)
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
