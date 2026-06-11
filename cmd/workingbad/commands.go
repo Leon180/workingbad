@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -307,7 +305,7 @@ func actionGoal(ctx context.Context, c *cli.Command) error {
 
 // createManual is the shared body of note / decision / goal.
 func createManual(ctx context.Context, svc *repository.Service, typ domain.EntryType, title, body string, status domain.Status) error {
-	hash := sha256Hex(typ, title, body)
+	hash := domain.SourceRefForManual(typ, title, body)
 	e, err := svc.InsertEntry(ctx, domain.Entry{
 		Type:      typ,
 		Title:     title,
@@ -520,14 +518,4 @@ func printEntries(w io.Writer, entries []domain.Entry) {
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", e.ID, e.Type, status, e.Title)
 	}
 	_ = tw.Flush()
-}
-
-func sha256Hex(typ domain.EntryType, title, body string) string {
-	h := sha256.New()
-	h.Write([]byte(string(typ)))
-	h.Write([]byte{0})
-	h.Write([]byte(title))
-	h.Write([]byte{0})
-	h.Write([]byte(body))
-	return hex.EncodeToString(h.Sum(nil))
 }
