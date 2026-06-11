@@ -57,32 +57,29 @@ SELECT ` + labelEntryColumns + `
 
 // AllSourceRefs returns every alias tuple that resolves to entryID's
 // logical chain. Order is (source, source_ref) ASC for stable rendering.
+//
+// Implemented as a single self-join over entries (entry → its logical_id
+// chain → aliases) rather than the natural "fetch logical_id then look
+// up aliases" pair of queries — one round-trip instead of two, which
+// matters when the caller batches AllSourceRefs across many entries
+// (UI render path may do this when showing chips per node).
+//
+// We distinguish "unknown entry" from "no aliases" by counting matched
+// entry rows; sql.ErrNoRows on the alias select would conflate the two.
 func (s *Service) AllSourceRefs(ctx context.Context, entryID string) ([]SourceRefAlias, error) {
 	if entryID == "" {
 		return nil, fmt.Errorf("%w: entry id required", ErrInvalidInput)
 	}
 
-	// Resolve to logical_id so callers passing any chain version get
-	// the full alias set for that logical entity.
-	var logicalID string
-	err := s.db.QueryRowContext(ctx,
-		`SELECT logical_id FROM entries WHERE id = ?`, entryID).
-		Scan(&logicalID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("%w: entry %s", ErrNotFound, entryID)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("repository: lookup logical_id: %w", err)
-	}
-
 	rows, err := s.db.QueryContext(ctx, `
 SELECT sr.source, sr.source_ref
-  FROM entry_source_refs sr
-  JOIN entries e ON e.id = sr.entry_id
- WHERE e.logical_id = ?
- ORDER BY sr.source, sr.source_ref`, logicalID)
+  FROM entries target
+  JOIN entries e ON e.logical_id = target.logical_id
+  JOIN entry_source_refs sr ON sr.entry_id = e.id
+ WHERE target.id = ?
+ ORDER BY sr.source, sr.source_ref`, entryID)
 	if err != nil {
-		return nil, fmt.Errorf("repository: list aliases: %w", err)
+		return nil, fmt.Errorf("repository: AllSourceRefs: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -96,7 +93,24 @@ SELECT sr.source, sr.source_ref
 		a.Source = domain.Source(src)
 		out = append(out, a)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Empty result could be "entry doesn't exist" OR "entry exists with
+	// no aliases". Resolve by checking entry existence — preserves the
+	// ErrNotFound contract for the unknown-entry case.
+	if len(out) == 0 {
+		var exists int
+		err := s.db.QueryRowContext(ctx,
+			`SELECT 1 FROM entries WHERE id = ? LIMIT 1`, entryID).Scan(&exists)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("%w: entry %s", ErrNotFound, entryID)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("repository: verify entry %s: %w", entryID, err)
+		}
+	}
+	return out, nil
 }
 
 // insertSourceRefAliasTx records the primary (source, source_ref) tuple

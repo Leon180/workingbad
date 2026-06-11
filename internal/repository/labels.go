@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/Leon180/workingbad/internal/domain"
 )
@@ -90,11 +91,21 @@ func (s *Service) SetLabels(ctx context.Context, entryID string, labels []domain
 		`DELETE FROM entry_labels WHERE entry_id = ?`, entryID); err != nil {
 		return fmt.Errorf("repository: clear labels: %w", err)
 	}
-	for l := range seen {
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO entry_labels (entry_id, label) VALUES (?, ?)`,
-			entryID, string(l)); err != nil {
-			return fmt.Errorf("repository: insert label %q: %w", l, err)
+	// One multi-row INSERT instead of N per-row inserts — the label set
+	// is bounded (≤3) but a caller that loops SetLabels across many
+	// entries (e.g. the seeder) compounds the round-trips fast. Build
+	// the placeholders + args up front.
+	if len(seen) > 0 {
+		placeholders := make([]string, 0, len(seen))
+		args := make([]any, 0, len(seen)*2)
+		for l := range seen {
+			placeholders = append(placeholders, "(?, ?)")
+			args = append(args, entryID, string(l))
+		}
+		q := `INSERT INTO entry_labels (entry_id, label) VALUES ` +
+			strings.Join(placeholders, ", ")
+		if _, err := tx.ExecContext(ctx, q, args...); err != nil {
+			return fmt.Errorf("repository: insert labels: %w", err)
 		}
 	}
 

@@ -88,6 +88,18 @@ func TestAllSourceRefs_OnLiveAnchor(t *testing.T) {
 	}
 }
 
+// TestAllSourceRefs_UnknownEntryReturnsNotFound guards the
+// "ErrNotFound vs empty result" contract after the 2-query → self-join
+// refactor (the single-query path needs an explicit existence check to
+// distinguish unknown entry from entry-with-no-aliases).
+func TestAllSourceRefs_UnknownEntryReturnsNotFound(t *testing.T) {
+	s := newService(t)
+	_, err := s.AllSourceRefs(ctx(t), "0192f6c0-7e31-7c2b-9b8a-ffffffffffff")
+	if err == nil || !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound for unknown id, got %v", err)
+	}
+}
+
 // TestInsertEntry_NoSourceRef_OmitsAlias guards the "empty SourceRef
 // skips alias write" branch in insertSourceRefAliasTx — git activities
 // without a deterministic ref should not create alias rows.
