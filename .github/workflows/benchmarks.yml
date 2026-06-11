@@ -48,12 +48,13 @@ jobs:
         # -run=^$ skips Test* functions (we only want bench data here;
         # the regular test job covers correctness).
         #
-        # Stdout-only: stderr (goose migration log) used to interleave
-        # with the benchmark output via 2>&1, producing lines like
+        # Stderr (goose migration log) used to interleave with the
+        # benchmark output via 2>&1, producing lines like
         #   "BenchmarkInsertEntry-4 ... 2026/06/11 12:37:09 OK 0001_*"
-        # which benchstat tries to parse and dies on. Keep stderr at the
-        # console (CI shows it in the live log), only stdout hits the
-        # artifact.
+        # which benchstat tries to parse and dies on. Pipe stdout
+        # through `tee` so the live CI log shows benchmark progress as
+        # it streams AND bench.txt stays stderr-free. stderr still
+        # surfaces in the CI log (it just doesn't pollute the file).
         run: |
           go test \
             -bench=. \
@@ -64,7 +65,7 @@ jobs:
             ./internal/repository/ \
             ./internal/web/ \
             ./internal/web/layout/ \
-            > bench.txt
+            | tee bench.txt
 
       - name: upload result as artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -76,7 +77,10 @@ jobs:
           retention-days: 30
 
       - name: print result to log (always)
-        run: cat bench.txt
+        # Redundant when `tee` above succeeds; kept so a `set -e` exit
+        # mid-bench still leaves the partial bench.txt visible.
+        if: always()
+        run: cat bench.txt || true
 
   regression-check:
     name: "bench: regression check"
