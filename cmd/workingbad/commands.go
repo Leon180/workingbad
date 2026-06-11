@@ -46,12 +46,20 @@ func allCommands() []*cli.Command {
 			Description: "Launches the embedded net/http server bound to 127.0.0.1 only. The UI\n" +
 				"shares the same RepositoryService as the CLI, so anything you create here\n" +
 				"is visible there immediately. Press Ctrl-C to drain and stop.\n\n" +
+				"DEBUG:\n" +
+				"  --debug exposes net/http/pprof on 127.0.0.1:<debug-port> for one-shot\n" +
+				"  profiling. Bound to loopback only; off by default. Use:\n" +
+				"    workingbad serve --debug\n" +
+				"    go tool pprof http://127.0.0.1:6060/debug/pprof/profile?seconds=10\n\n" +
 				"EXAMPLES:\n" +
 				"  workingbad serve\n" +
 				"  workingbad serve --port 7890\n" +
+				"  workingbad serve --debug --debug-port 6061\n" +
 				"  workingbad --config ~/.workingbad/config.yaml serve",
 			Flags: []cli.Flag{
 				&cli.IntFlag{Name: "port", Usage: "listen port (overrides web.port from config.yaml; 0 = use config)"},
+				&cli.BoolFlag{Name: "debug", Usage: "expose net/http/pprof on 127.0.0.1:<debug-port> for one-shot profiling"},
+				&cli.IntFlag{Name: "debug-port", Value: 6060, Usage: "loopback port for the pprof endpoints (only used with --debug)"},
 			},
 			Action: actionServe,
 		},

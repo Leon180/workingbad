@@ -142,10 +142,36 @@ graph       50 req/s × 10s           8.1ms    12.2ms   100.00%  OK  <500ms
 
 CI: `.github/workflows/load-test.yml` is `workflow_dispatch`-only — run it on-demand before merging anything that touches the request path or the repository hot queries. Result JSON + server log are archived as workflow artifacts for trend tracking.
 
+## On-demand profiling (`workingbad serve --debug`)
+
+When you actually need to see "where is the binary spending CPU / allocating / blocking right now", start the server with `--debug`:
+
+```bash
+workingbad serve --debug                       # pprof on 127.0.0.1:6060 by default
+workingbad serve --debug --debug-port 6061     # pick a different port
+```
+
+A second http.Server is started on `127.0.0.1:<debug-port>` exposing only the standard `net/http/pprof` endpoints. **Loopback-only is non-negotiable** — pprof leaks goroutine stacks, allocations, and live profiling data; it must never bind a wildcard interface (there's a guarded test for this in `serve_test.go`).
+
+Common one-liners:
+
+```bash
+# 10-second CPU profile
+go tool pprof -http=:0 http://127.0.0.1:6060/debug/pprof/profile?seconds=10
+
+# Heap snapshot
+go tool pprof -http=:0 http://127.0.0.1:6060/debug/pprof/heap
+
+# 5-second execution trace
+curl -o trace.out http://127.0.0.1:6060/debug/pprof/trace?seconds=5
+go tool trace trace.out
+```
+
+`--debug` is opt-in: pprof handlers and the listener pay nothing in the default path (no `_ "net/http/pprof"` blank import that would auto-register on DefaultServeMux).
+
 ## What we deliberately don't measure (yet)
 
 - **Memory leaks** over long uptime: out of scope for dogfood phase
-- **CPU profile during real work**: covered by `--debug` pprof flag (#29) on-demand
 
 ## When to re-baseline the reference numbers
 
