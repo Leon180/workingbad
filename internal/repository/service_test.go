@@ -93,8 +93,10 @@ func TestInsertEntry_ActivityRejectsStatus(t *testing.T) {
 		Type: domain.EntryTypeActivity, Origin: domain.OriginLocal,
 		Source: domain.SourceGit, Title: "x", Status: domain.StatusOpen,
 	})
-	if err == nil || !strings.Contains(err.Error(), "must have empty status") {
-		t.Errorf("expected status-must-be-empty error, got %v", err)
+	// Validator now allows status=archived on non-goal types (#51), so the
+	// error message changed. It still must reject status=open on activity.
+	if err == nil || !strings.Contains(err.Error(), "can only carry status=archived") {
+		t.Errorf("expected non-goal status rejection, got %v", err)
 	}
 }
 

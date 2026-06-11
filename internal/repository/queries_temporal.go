@@ -58,6 +58,9 @@ func (s *Service) ListEntriesAt(ctx context.Context, asOf time.Time, filter List
 		where = append(where, "e.repo_id = ?")
 		args = append(args, filter.RepoID)
 	}
+	if !filter.IncludeArchived {
+		where = append(where, "COALESCE(e.status, '') != 'archived'")
+	}
 	args = append(args, filter.Limit)
 
 	q := `SELECT e.id, e.logical_id, e.type, e.title, e.body, e.source,

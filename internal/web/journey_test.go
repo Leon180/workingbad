@@ -206,7 +206,8 @@ func listFilterActivity() repoFilterAlias {
 // just for the constructor. The type is converted to repository.ListFilter
 // implicitly via a struct-literal in the test.
 type repoFilterAlias = struct {
-	Type   domain.EntryType
-	RepoID string
-	Limit  int
+	Type            domain.EntryType
+	RepoID          string
+	Limit           int
+	IncludeArchived bool
 }
