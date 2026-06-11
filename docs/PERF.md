@@ -69,7 +69,15 @@ These are 10-sample averages. Day-to-day variance is typically <5%.
 `.github/workflows/benchmarks.yml` runs every benchmark on every PR + on every push to main:
 
 - **Main pushes**: artifact `bench-main.txt` is uploaded (overwrites on each run).
-- **PRs**: download `bench-main.txt` from the latest main workflow run, run benchstat against the PR's results, fail if any benchmark shows a > 5% slowdown with p < 0.05.
+- **PRs**: download `bench-main.txt` from the latest main workflow run, run benchstat against the PR's results, fail if any benchmark shows a **> 15% slowdown** with p < 0.05.
+
+### Why 15% and not 5%
+
+The first cut of this gate used 5%. We raised it to 15% on 2026-06-11 (retro #64) after a YAML-only PR triggered a +12.98% (p=0.000, n=10) "regression" on `BenchmarkBuild_500nodes_5lanes-4`. Zero Go code changed — that wiggle was pure shared-runner variance.
+
+GitHub Actions ubuntu-latest runs on AMD EPYC infrastructure shared with other tenants. Same commit, two runs, the same benchmark routinely drifts 5–15% on CPU-bound work depending on neighbour load. A 5% gate at that noise floor is a false-positive generator; reviewers learn to ignore it; the gate stops gating.
+
+15% lets the noise pass while still catching real algorithmic regressions: doubling a hot loop is +100%, an N+1 fall-through is quadratic, a missed index easily exceeds 2×. We re-tighten when we move benchmarks off shared runners.
 
 Pre-merge: a PR that introduces a real regression visibly fails the `bench: regression check` status check.
 

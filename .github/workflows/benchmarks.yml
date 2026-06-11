@@ -53,8 +53,16 @@ jobs:
         #   "BenchmarkInsertEntry-4 ... 2026/06/11 12:37:09 OK 0001_*"
         # which benchstat tries to parse and dies on. Pipe stdout
         # through `tee` so the live CI log shows benchmark progress as
-        # it streams AND bench.txt stays stderr-free. stderr still
-        # surfaces in the CI log (it just doesn't pollute the file).
+        # it streams AND bench-raw.txt stays stderr-free.
+        #
+        # Then run the same strict positive filter that regression-check
+        # uses, *before* upload, so the artifact itself is benchstat-
+        # parseable. Without this the upload happens to a raw file and
+        # any older filter mismatch (or contamination class we didn't
+        # think of) gets baked into the main baseline, poisoning every
+        # subsequent PR check until the baseline rolls. The defensive
+        # filter in regression-check stays as belt-and-suspenders for
+        # baselines uploaded before this step landed.
         run: |
           go test \
             -bench=. \
@@ -65,7 +73,11 @@ jobs:
             ./internal/repository/ \
             ./internal/web/ \
             ./internal/web/layout/ \
-            | tee bench.txt
+            | tee bench-raw.txt
+          FILTER='^(goos:|goarch:|pkg:|cpu:|Benchmark[A-Za-z0-9_/]+-[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+(\.[0-9]+)?[[:space:]]+ns/op|PASS|FAIL|ok[[:space:]])'
+          grep -E "$FILTER" bench-raw.txt > bench.txt
+          echo "--- artifact preview (filtered) ---"
+          head -30 bench.txt
 
       - name: upload result as artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
