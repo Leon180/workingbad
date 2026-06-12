@@ -1,12 +1,17 @@
 name: Auto-Retro
 
-# Process model (per 2026-06-09 conversation): every N=3 merged PRs to
-# main, open a retro issue prefilled with the window's PR list. The
-# retro itself is reviewed by the user; what falls out (decisions,
-# follow-up actions) becomes the next cycle's inputs.
+# Process model: every N merged PRs to main, open a retro issue
+# prefilled with the window's PR list. The retro itself is reviewed by
+# the user; what falls out (decisions, follow-up actions) becomes the
+# next cycle's inputs.
 #
-# Why N=3: small enough to remember context, large enough that the retro
-# surfaces patterns rather than nitpicks. Tuned later in retro #1.
+# N tuning history:
+#  - 2026-06-09 first set: N=3 ("small enough to remember context").
+#  - 2026-06-11 retro #64: raised to N=10. At our actual cadence
+#    (~10-12 PRs/day during build-out) N=3 was opening retros faster
+#    than humans could write them. Six retros stacked up unfilled and
+#    we closed them all when consolidating to one window retro.
+#    N=10 is a better signal-to-noise tradeoff for this phase.
 
 on:
   pull_request:
@@ -31,7 +36,7 @@ jobs:
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
-            const RETRO_WINDOW = 3;
+            const RETRO_WINDOW = 10;
 
             // 1. Find the most recent retro issue (closed or open).
             //    Use it as the start-of-window marker.
