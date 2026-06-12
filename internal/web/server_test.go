@@ -44,7 +44,7 @@ func newTestServerFromTB(tb testing.TB) *Server {
 	if err != nil {
 		tb.Fatalf("NewServer: %v", err)
 	}
-	_ = srv.listener.Close()
+	_ = srv.Close()
 	return srv
 }
 
@@ -138,7 +138,7 @@ func TestNewServer_BindsToLoopbackOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
-	defer func() { _ = srv2.listener.Close() }()
+	defer func() { _ = srv2.Close() }()
 	if !strings.HasPrefix(srv2.Addr(), "127.0.0.1:") {
 		t.Errorf("listener bound to %q, expected 127.0.0.1:*", srv2.Addr())
 	}
