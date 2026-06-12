@@ -30,12 +30,14 @@ var allEntryTypes = []domain.EntryType{
 //	GET /                           — live entries, default limit
 //	GET /?type=goal                 — only goals
 //	GET /?type=activity&limit=200
+//	GET /?include_archived=true     — show soft-deleted entries
 //	GET /?at=2026-06-08T14:00:00Z   — time-travel: state as of that moment
 //	GET /?at=2026-06-08             — date alone = midnight UTC
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	filter := repository.ListFilter{
-		Type:  domain.EntryType(r.URL.Query().Get("type")),
-		Limit: parseLimit(r.URL.Query().Get("limit")),
+		Type:            domain.EntryType(r.URL.Query().Get("type")),
+		Limit:           parseLimit(r.URL.Query().Get("limit")),
+		IncludeArchived: r.URL.Query().Get("include_archived") == "true",
 	}
 	if !isKnownType(filter.Type) {
 		filter.Type = "" // ignore garbage rather than 400 — UI errors are
