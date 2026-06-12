@@ -22,12 +22,14 @@ import (
 	"bytes"
 	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"html/template"
 	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
+	"path"
 	"strconv"
 	"time"
 
@@ -123,17 +125,22 @@ func NewServer(svc *repository.Service, cfg config.Web) (*Server, error) {
 	}
 	s.listener = ln
 
-	// Stack: CrossOriginProtection → Host allowlist → mutationGuard → mux.
+	// Stack (outside → in):
+	//   CrossOriginProtection → Host allowlist → loggingMiddleware → mutationGuard → mux.
 	// Order matters:
 	//   - CrossOriginProtection outermost: bails fastest on cross-origin
 	//     browser POSTs via Sec-Fetch-Site.
 	//   - Host allowlist next: closes the DNS-rebinding hole at HTTP
 	//     layer (the listener bind is the other half).
+	//   - loggingMiddleware after host allowlist (so forbidden-host
+	//     rejections don't fill the log) and before mutationGuard (so
+	//     rejected mutations are still observable).
 	//   - mutationGuard innermost: identity today, the named seam where
 	//     CSRF / local-token-auth / rate-limit / actor-injection land
 	//     when Phase 2 needs them — additive, no handler changes
 	//     required (architect review #10 P0).
 	handler := s.mutationGuard(s.mux)
+	handler = s.loggingMiddleware(handler)
 	handler = s.hostAllowlist(handler)
 	cop := http.NewCrossOriginProtection()
 	handler = cop.Handler(handler)
@@ -238,11 +245,33 @@ func (s *Server) Serve(ctx context.Context) error {
 		_ = s.httpSrv.Shutdown(shutdownCtx)
 		return nil
 	case err := <-errCh:
-		if err == http.ErrServerClosed {
+		// errors.Is over == here is idiomatic (avoids the sentinel-
+		// comparison lint warning); the net/http server returns
+		// ErrServerClosed unwrapped today, so == would still work, but
+		// the form survives any future wrapping at zero cost.
+		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
 		return fmt.Errorf("web: serve: %w", err)
 	}
+}
+
+// Close releases the listener if Serve hasn't taken ownership yet. Tests
+// build a Server via NewServer (which binds the listener) without calling
+// Serve, so they need a way to drop the bound port. Idempotent for the
+// expected race: calling Close after Serve has started or twice in a row
+// surfaces as net.ErrClosed, which we swallow so callers can defer Close
+// without state-tracking. Any other listener error (rare — OS-level
+// failure during teardown) propagates so we don't silently lose signal.
+func (s *Server) Close() error {
+	if s.listener == nil {
+		return nil
+	}
+	err := s.listener.Close()
+	if err == nil || errors.Is(err, net.ErrClosed) {
+		return nil
+	}
+	return err
 }
 
 // parseTemplates returns one parsed template set per page. Each set
@@ -291,7 +320,7 @@ func parseTemplates() (map[string]*template.Template, error) {
 
 	out := make(map[string]*template.Template, len(pageFiles))
 	for _, page := range pageFiles {
-		name := page[len("templates/"):]
+		name := path.Base(page)
 		if name == "base.html" {
 			continue
 		}
