@@ -11,10 +11,17 @@ import (
 )
 
 // ListFilter narrows ListEntries. Empty fields are wildcards.
+//
+// IncludeArchived defaults to false — soft-deleted (status=archived)
+// entries are hidden from the default list so an engineer who archived
+// a junk entry doesn't keep seeing it. The CLI / Web UI can flip it
+// on via --include-archived / ?include_archived=true when the user
+// wants to review the archive.
 type ListFilter struct {
-	Type   domain.EntryType
-	RepoID string
-	Limit  int // <=0 → DefaultListLimit
+	Type            domain.EntryType
+	RepoID          string
+	Limit           int // <=0 → DefaultListLimit
+	IncludeArchived bool
 }
 
 // DefaultListLimit caps ListEntries when the caller did not specify.
@@ -35,6 +42,13 @@ func (s *Service) ListEntries(ctx context.Context, filter ListFilter) ([]domain.
 	if filter.RepoID != "" {
 		where = append(where, "repo_id = ?")
 		args = append(args, filter.RepoID)
+	}
+	if !filter.IncludeArchived {
+		// status defaults to NULL/"" for non-goal entries (issue #51
+		// extended that to allow status=archived too). Hide either NULL
+		// or '' is irrelevant — we only want to filter OUT explicit
+		// 'archived'. COALESCE keeps NULL-status rows visible.
+		where = append(where, "COALESCE(status, '') != 'archived'")
 	}
 	q := `SELECT id, logical_id, type, title, body, source, COALESCE(source_ref, ''),
                  COALESCE(source_event_hash, ''), origin, COALESCE(repo_id, ''),

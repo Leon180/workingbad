@@ -162,8 +162,13 @@ func validateEntry(e domain.Entry) error {
 		domain.EntryTypeResearch,
 		domain.EntryTypeDiscuss,
 		domain.EntryTypeDecision:
-		if e.Status != "" {
-			return fmt.Errorf("entry: %s entries must have empty status", e.Type)
+		// Non-goal entries default to no status. The single exception is
+		// archived — issue #51 — so a user can soft-delete a duplicate /
+		// junk entry without supersede + empty content gymnastics. Any
+		// other goal-only status (open/in_progress/done) is still wrong
+		// on these types and surfaces as the same validator error.
+		if e.Status != "" && e.Status != domain.StatusArchived {
+			return fmt.Errorf("entry: %s entries can only carry status=archived (or empty)", e.Type)
 		}
 	case "":
 		return errors.New("entry: type required")
