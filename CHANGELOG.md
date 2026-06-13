@@ -1,0 +1,9 @@
+# Changelog
+
+## [0.2.0](https://github.com/Leon180/workingbad/compare/v0.1.0...v0.2.0) (2026-06-13)
+
+
+### Features
+
+* **repo:** node layer + entry↔node mapping (Slice D1, closes [#68](https://github.com/Leon180/workingbad/issues/68)) ([#78](https://github.com/Leon180/workingbad/issues/78)) ([32a1b34](https://github.com/Leon180/workingbad/commit/32a1b34e6ff8be0df66e086147e0345979501906))
+* **repo:** node supersede chain (Slice D2 step 1) ([#79](https://github.com/Leon180/workingbad/issues/79)) ([9d6e242](https://github.com/Leon180/workingbad/commit/9d6e242894b29a3a83573b9f4b6c4d90acb269dd))
