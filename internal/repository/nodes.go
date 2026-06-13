@@ -5,12 +5,16 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/Leon180/workingbad/internal/domain"
 )
+
+// defaultSearchLimit caps SearchNodes when the caller passes limit <= 0.
+const defaultSearchLimit = 50
 
 // validNodeTypes is the closed enum a node's primary type may take — the
 // same set as entries.type. Unlike secondary labels (which exclude goal),
@@ -24,14 +28,17 @@ var validNodeTypes = map[domain.EntryType]struct{}{
 }
 
 // nodeColumns is the SELECT column list scanNodeRows expects, in order.
-// Kept in one place so GetNode / NodesForEntry / GetLiveNodeByLogicalID stay
-// in lockstep with the scanner. COALESCE bridges D1 rows (added before the
-// D2 supersede columns existed) — version→1, occurred/ingested→created_at.
-const nodeColumns = `id, COALESCE(logical_id, id), type, title, body, COALESCE(status, ''),
-       COALESCE(version, 1), is_current, COALESCE(superseded_by, ''),
-       COALESCE(occurred_at, ingested_at, created_at),
-       COALESCE(ingested_at, created_at),
-       created_at, updated_at`
+// Kept in one place so GetNode / NodesForEntry / GetLiveNodeByLogicalID /
+// SearchNodes stay in lockstep with the scanner. Every column is qualified
+// with the `n` alias so the list is safe to embed in joins where another table
+// (e.g. nodes_fts) shares column names like title/body; all callers therefore
+// alias the nodes table as `n`. COALESCE bridges D1 rows (added before the D2
+// supersede columns existed) — version→1, occurred/ingested→created_at.
+const nodeColumns = `n.id, COALESCE(n.logical_id, n.id), n.type, n.title, n.body, COALESCE(n.status, ''),
+       COALESCE(n.version, 1), n.is_current, COALESCE(n.superseded_by, ''),
+       COALESCE(n.occurred_at, n.ingested_at, n.created_at),
+       COALESCE(n.ingested_at, n.created_at),
+       n.created_at, n.updated_at`
 
 // validateNode enforces the per-type contract a node must satisfy. Shared by
 // CreateNode and SupersedeNode so both reject the same bad inputs.
@@ -85,18 +92,58 @@ func (s *Service) CreateNode(ctx context.Context, n domain.Node) (domain.Node, e
 		n.UpdatedAt = now
 	}
 
-	_, err := s.db.ExecContext(ctx,
+	// Node row + its FTS mirror commit atomically (entries_fts contract).
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Node{}, fmt.Errorf("repository: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO nodes
 		   (id, logical_id, type, title, body, status, version, is_current,
 		    superseded_by, occurred_at, ingested_at, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, 1, NULL, ?, ?, ?, ?)`,
 		n.ID, n.LogicalID, string(n.Type), n.Title, n.Body, string(n.Status), n.Version,
 		n.OccurredAt.Format(time.RFC3339Nano), n.IngestedAt.Format(time.RFC3339Nano),
-		n.CreatedAt.Format(time.RFC3339Nano), n.UpdatedAt.Format(time.RFC3339Nano))
-	if err != nil {
+		n.CreatedAt.Format(time.RFC3339Nano), n.UpdatedAt.Format(time.RFC3339Nano)); err != nil {
 		return domain.Node{}, fmt.Errorf("repository: insert node: %w", err)
 	}
+	if err := insertNodeFTS(ctx, tx, n); err != nil {
+		return domain.Node{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.Node{}, fmt.Errorf("repository: commit: %w", err)
+	}
 	return n, nil
+}
+
+// nodeFTSExecer is the subset of *sql.Tx the FTS maintenance helpers need. FTS
+// maintenance ALWAYS runs inside the node-write tx so the index commits
+// atomically with the node row (own-content, no triggers — entries_fts
+// contract, see migration 0007 / 0015).
+type nodeFTSExecer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// insertNodeFTS mirrors a live node into nodes_fts.
+func insertNodeFTS(ctx context.Context, tx nodeFTSExecer, n domain.Node) error {
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO nodes_fts (node_id, title, body) VALUES (?, ?, ?)`,
+		n.ID, n.Title, n.Body); err != nil {
+		return fmt.Errorf("repository: nodes_fts insert: %w", err)
+	}
+	return nil
+}
+
+// deleteNodeFTS drops a node's nodes_fts row — called when it stops being live
+// (supersede), so the index mirrors is_current=1 nodes only.
+func deleteNodeFTS(ctx context.Context, tx nodeFTSExecer, nodeID string) error {
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM nodes_fts WHERE node_id = ?`, nodeID); err != nil {
+		return fmt.Errorf("repository: nodes_fts delete: %w", err)
+	}
+	return nil
 }
 
 // SupersedeNode appends a new version of a node and retires the old one — the
@@ -189,6 +236,10 @@ func (s *Service) SupersedeNode(ctx context.Context, oldID string, expectedVersi
 	} else if n != 1 {
 		return domain.Node{}, fmt.Errorf("%w: node %s was concurrently superseded", ErrVersionConflict, oldID)
 	}
+	// The retired version is no longer live → drop its FTS mirror.
+	if err := deleteNodeFTS(ctx, tx, oldID); err != nil {
+		return domain.Node{}, err
+	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO nodes
 		   (id, logical_id, type, title, body, status, version, is_current,
@@ -198,6 +249,10 @@ func (s *Service) SupersedeNode(ctx context.Context, oldID string, expectedVersi
 		r.OccurredAt.Format(time.RFC3339Nano), r.IngestedAt.Format(time.RFC3339Nano),
 		r.CreatedAt.Format(time.RFC3339Nano), r.UpdatedAt.Format(time.RFC3339Nano)); err != nil {
 		return domain.Node{}, fmt.Errorf("repository: insert node version: %w", err)
+	}
+	// …and index the new live version.
+	if err := insertNodeFTS(ctx, tx, r); err != nil {
+		return domain.Node{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return domain.Node{}, fmt.Errorf("repository: commit: %w", err)
@@ -212,7 +267,7 @@ func (s *Service) GetNode(ctx context.Context, id string) (domain.Node, error) {
 		return domain.Node{}, fmt.Errorf("%w: node id required", ErrInvalidInput)
 	}
 	n, err := scanNode(s.db.QueryRowContext(ctx,
-		`SELECT `+nodeColumns+` FROM nodes WHERE id = ?`, id))
+		`SELECT `+nodeColumns+` FROM nodes n WHERE n.id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Node{}, fmt.Errorf("%w: node %s", ErrNotFound, id)
 	}
@@ -230,7 +285,7 @@ func (s *Service) GetLiveNodeByLogicalID(ctx context.Context, logicalID string) 
 		return domain.Node{}, fmt.Errorf("%w: logical id required", ErrInvalidInput)
 	}
 	n, err := scanNode(s.db.QueryRowContext(ctx,
-		`SELECT `+nodeColumns+` FROM nodes WHERE logical_id = ? AND is_current = 1`, logicalID))
+		`SELECT `+nodeColumns+` FROM nodes n WHERE n.logical_id = ? AND n.is_current = 1`, logicalID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Node{}, fmt.Errorf("%w: live node for logical_id %s", ErrNotFound, logicalID)
 	}
@@ -238,6 +293,55 @@ func (s *Service) GetLiveNodeByLogicalID(ctx context.Context, logicalID string) 
 		return domain.Node{}, fmt.Errorf("repository: get live node: %w", err)
 	}
 	return n, nil
+}
+
+// SearchNodes runs an FTS5 full-text query over the live node layer, best
+// matches first (bm25 — lower score = closer match). The raw query is
+// sanitised into a safe FTS5 expression (ftsMatchQuery) so arbitrary user text
+// can't trigger an FTS5 syntax error or inject operators. A query with no
+// usable term returns an empty slice (not an error). limit <= 0 falls back to
+// defaultSearchLimit.
+//
+// nodes_fts contains is_current=1 rows only (maintenance contract), so the join
+// already yields live nodes; the explicit n.is_current = 1 is belt-and-braces.
+func (s *Service) SearchNodes(ctx context.Context, query string, limit int) ([]domain.Node, error) {
+	match := ftsMatchQuery(query)
+	if match == "" {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = defaultSearchLimit
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+nodeColumns+`
+		   FROM nodes_fts
+		   JOIN nodes n ON n.id = nodes_fts.node_id
+		  WHERE nodes_fts MATCH ? AND n.is_current = 1
+		  ORDER BY bm25(nodes_fts)
+		  LIMIT ?`, match, limit)
+	if err != nil {
+		return nil, fmt.Errorf("repository: search nodes: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanNodeRows(rows)
+}
+
+// ftsMatchQuery turns arbitrary user text into a safe FTS5 MATCH expression:
+// each whitespace-separated token becomes a double-quoted string literal
+// (internal double-quotes doubled per FTS5 escaping), joined by spaces
+// (implicit AND). Quoting neutralises FTS5 operators and special characters, so
+// untrusted input can never produce a syntax error or inject query logic.
+// Returns "" when no usable token remains.
+func ftsMatchQuery(raw string) string {
+	fields := strings.Fields(raw)
+	if len(fields) == 0 {
+		return ""
+	}
+	quoted := make([]string, 0, len(fields))
+	for _, f := range fields {
+		quoted = append(quoted, `"`+strings.ReplaceAll(f, `"`, `""`)+`"`)
+	}
+	return strings.Join(quoted, " ")
 }
 
 // MapEntryToNode records an entry↔node mapping. Idempotent (re-mapping the

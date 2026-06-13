@@ -150,6 +150,12 @@ func backfillNodes(t *testing.T, s *Service) {
 		 SELECT id, logical_id FROM entries`); err != nil {
 		t.Fatalf("backfill map: %v", err)
 	}
+	// 0015: backfill nodes_fts from the live nodes just inserted.
+	if _, err := s.db.ExecContext(c,
+		`INSERT INTO nodes_fts (node_id, title, body)
+		 SELECT id, title, body FROM nodes WHERE is_current = 1`); err != nil {
+		t.Fatalf("backfill nodes_fts: %v", err)
+	}
 }
 
 // TestBackfill_OneNodePerLogicalID — a superseded chain (2 entry rows, 1
@@ -369,5 +375,132 @@ func TestGetLiveNodeByLogicalID_NotFound(t *testing.T) {
 	_, err := s.GetLiveNodeByLogicalID(ctx(t), "0192f6c0-7e31-7c2b-9b8a-ffffffffffff")
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+// --- D2 step 2: FTS5 search over the live node layer ---
+
+func TestSearchNodes_FindsCreatedNode(t *testing.T) {
+	s := newService(t)
+	c := ctx(t)
+	n, err := s.CreateNode(c, domain.Node{
+		Type: domain.EntryTypeResearch, Title: "investigate vector indexing",
+		Body: "spike sqlite-vec for embeddings",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.SearchNodes(c, "vector", 10)
+	if err != nil {
+		t.Fatalf("SearchNodes: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != n.ID {
+		t.Errorf("SearchNodes(vector) = %v, want [%s]", got, n.ID)
+	}
+	// Body is indexed too.
+	got, err = s.SearchNodes(c, "embeddings", 10)
+	if err != nil || len(got) != 1 || got[0].ID != n.ID {
+		t.Errorf("body term search = %v err=%v, want [%s]", got, err, n.ID)
+	}
+}
+
+// SupersedeNode must keep nodes_fts mirroring the LIVE version only: the old
+// term disappears, the new term appears (node analogue of
+// TestSupersede_FTSMirrorsLatest).
+func TestSupersedeNode_FTSMirrorsLive(t *testing.T) {
+	s := newService(t)
+	c := ctx(t)
+	v1, err := s.CreateNode(c, domain.Node{Type: domain.EntryTypeDecision, Title: "choose alphaengine"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v2, err := s.SupersedeNode(c, v1.ID, v1.Version, domain.Node{
+		Type: domain.EntryTypeDecision, Title: "choose omegaengine",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if hits, _ := s.SearchNodes(c, "alphaengine", 10); len(hits) != 0 {
+		t.Errorf("stale term still indexed: %v", hits)
+	}
+	hits, err := s.SearchNodes(c, "omegaengine", 10)
+	if err != nil || len(hits) != 1 || hits[0].ID != v2.ID {
+		t.Errorf("live term search = %v err=%v, want [%s]", hits, err, v2.ID)
+	}
+}
+
+func TestSearchNodes_RankingAndLimit(t *testing.T) {
+	s := newService(t)
+	c := ctx(t)
+	// Two nodes mention "cache"; one mentions it twice (stronger bm25).
+	weak, err := s.CreateNode(c, domain.Node{Type: domain.EntryTypeActivity, Title: "touch cache once"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	strong, err := s.CreateNode(c, domain.Node{
+		Type: domain.EntryTypeActivity, Title: "cache cache", Body: "cache layer work",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.SearchNodes(c, "cache", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d hits, want 2", len(got))
+	}
+	if got[0].ID != strong.ID {
+		t.Errorf("ranking wrong: best = %s, want %s (strong)", got[0].ID, strong.ID)
+	}
+	// limit is honoured.
+	one, err := s.SearchNodes(c, "cache", 1)
+	if err != nil || len(one) != 1 || one[0].ID != strong.ID {
+		t.Errorf("limit=1 = %v err=%v, want [%s]", one, err, strong.ID)
+	}
+	_ = weak
+}
+
+// Arbitrary user input — FTS5 operators / quotes / parens — must never error.
+func TestSearchNodes_SanitisesInput(t *testing.T) {
+	s := newService(t)
+	c := ctx(t)
+	if _, err := s.CreateNode(c, domain.Node{Type: domain.EntryTypeActivity, Title: "normal node"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{`"`, `AND OR NOT`, `foo(bar`, `near/2`, `a* OR b`, `"unterminated`} {
+		if _, err := s.SearchNodes(c, q, 10); err != nil {
+			t.Errorf("SearchNodes(%q) errored on hostile input: %v", q, err)
+		}
+	}
+}
+
+func TestSearchNodes_EmptyQueryReturnsNil(t *testing.T) {
+	s := newService(t)
+	c := ctx(t)
+	if _, err := s.CreateNode(c, domain.Node{Type: domain.EntryTypeActivity, Title: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{"", "   ", "\t\n"} {
+		got, err := s.SearchNodes(c, q, 10)
+		if err != nil || got != nil {
+			t.Errorf("SearchNodes(%q) = %v err=%v, want nil/nil", q, got, err)
+		}
+	}
+}
+
+// Backfilled nodes (from the migration path, not CreateNode) are searchable.
+func TestBackfill_NodesAreSearchable(t *testing.T) {
+	s := newService(t)
+	c := ctx(t)
+	seedActivity(t, s, "backfilled searchable widget")
+	backfillNodes(t, s)
+	got, err := s.SearchNodes(c, "widget", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Errorf("backfilled node not searchable: got %d hits, want 1", len(got))
 	}
 }
