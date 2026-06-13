@@ -186,14 +186,16 @@ type attachedActivity struct {
 // (issue #12): fetch every part_of edge pointing at this goal once,
 // index by from_id, then look up per activity in Go.
 func (s *Server) collectAttached(ctx context.Context, goal domain.Entry, activities []domain.Entry) ([]attachedActivity, error) {
+	// Edges key on the node's logical_id (decision (a)), so filter + index by
+	// logical_id, not the per-version entry id.
 	edges, err := s.svc.EdgesAt(ctx, time.Now().UTC(),
-		repository.EdgeFilter{Relation: domain.RelationPartOf, ToID: goal.ID})
+		repository.EdgeFilter{Relation: domain.RelationPartOf, ToID: goal.LogicalID})
 	if err != nil {
 		return nil, err
 	}
-	// from_id -> live edge id. The EdgesAt result is bounded by the
-	// number of part_of edges into this single goal, so the map cost
-	// is O(edges) for the build and O(1) per activity lookup.
+	// from_id (a node logical_id) -> live edge id. The EdgesAt result is
+	// bounded by the number of part_of edges into this single goal, so the map
+	// cost is O(edges) for the build and O(1) per activity lookup.
 	byFrom := make(map[string]string, len(edges))
 	for _, e := range edges {
 		if !e.IsCurrent {
@@ -206,7 +208,7 @@ func (s *Server) collectAttached(ctx context.Context, goal domain.Entry, activit
 	}
 	out := make([]attachedActivity, 0, len(activities))
 	for _, a := range activities {
-		out = append(out, attachedActivity{Activity: a, EdgeID: byFrom[a.ID]})
+		out = append(out, attachedActivity{Activity: a, EdgeID: byFrom[a.LogicalID]})
 	}
 	return out, nil
 }

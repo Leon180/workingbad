@@ -26,11 +26,13 @@ SELECT id, to_id, relation, metadata, occurred_at FROM edges
 UPDATE edges SET is_current = 0, superseded_by = ? WHERE id = ?;
 
 -- name: GetGoalActivitiesByLogicalID :many
+-- Edges key on the node stable id (logical_id == node.id) since migration 0017,
+-- so the activity joins by its logical_id and the goal is matched directly by
+-- its logical_id (no goal-version chain join needed).
 SELECT e.*
   FROM entries AS e
-  JOIN edges   AS ed ON ed.from_id = e.id AND ed.relation = 'part_of' AND ed.is_current = 1
-  JOIN entries AS g  ON ed.to_id = g.id
- WHERE g.logical_id = (SELECT seed.logical_id FROM entries AS seed WHERE seed.id = ?)
+  JOIN edges   AS ed ON ed.from_id = e.logical_id AND ed.relation = 'part_of' AND ed.is_current = 1
+ WHERE ed.to_id = (SELECT seed.logical_id FROM entries AS seed WHERE seed.id = ?)
    AND e.type = 'activity'
    AND e.is_current = 1
  ORDER BY e.occurred_at ASC, e.ingested_at ASC;

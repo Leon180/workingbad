@@ -125,6 +125,92 @@ func TestDetachFromGoal_ReAttachWorks(t *testing.T) {
 	}
 }
 
+// --- migration 0017: entry-id → node-id remap + dedup ---
+
+// remapEdgesToNode re-runs migration 0017's destructive steps (drop index →
+// remap from_id/to_id via entries.logical_id → dedup colliding live triples →
+// rebuild index) so the remap can be asserted on seeded data; the migration
+// itself runs once on an empty test DB. Kept in lockstep with
+// 0017_edges_rekey_to_node.sql.
+func remapEdgesToNode(t *testing.T, s *Service) {
+	t.Helper()
+	for _, q := range []string{
+		`DROP INDEX IF EXISTS idx_edges_live_triple`,
+		`UPDATE edges SET from_id = (SELECT e.logical_id FROM entries e WHERE e.id = edges.from_id)
+		   WHERE EXISTS (SELECT 1 FROM entries e WHERE e.id = edges.from_id)`,
+		`UPDATE edges SET to_id = (SELECT e.logical_id FROM entries e WHERE e.id = edges.to_id)
+		   WHERE EXISTS (SELECT 1 FROM entries e WHERE e.id = edges.to_id)`,
+		`UPDATE edges SET is_current = 0
+		   WHERE is_current = 1 AND rowid NOT IN (
+		     SELECT MAX(rowid) FROM edges WHERE is_current = 1 GROUP BY from_id, to_id, relation)`,
+		`CREATE UNIQUE INDEX idx_edges_live_triple ON edges(from_id, to_id, relation) WHERE is_current = 1`,
+	} {
+		if _, err := s.db.ExecContext(ctx(t), q); err != nil {
+			t.Fatalf("remap step %q: %v", q, err)
+		}
+	}
+}
+
+func TestMigration0017_RemapAndDedup(t *testing.T) {
+	s := newService(t)
+	v1, _ := s.InsertEntry(ctx(t), domain.Entry{
+		Type: domain.EntryTypeActivity, Origin: domain.OriginLocal,
+		Source: domain.SourceManual, SourceRef: "rk-1", Title: "v1",
+	})
+	v2, err := s.Supersede(ctx(t), v1.ID, 0, domain.Entry{
+		Type: domain.EntryTypeActivity, Origin: domain.OriginLocal,
+		Source: domain.SourceManual, SourceRef: "rk-2", Title: "v2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, _ := s.InsertEntry(ctx(t), domain.Entry{
+		Type: domain.EntryTypeGoal, Origin: domain.OriginLocal,
+		Source: domain.SourceManual, SourceRef: "rk-g", Title: "g", Status: domain.StatusOpen,
+	})
+
+	// Two pre-migration (entry-id keyed) live edges. v1.id and v2.id are
+	// distinct (so the OLD unique index permits both), but they share
+	// logical_id == v1.id, so the remap collapses them onto one node triple.
+	for _, ed := range []struct{ id, from string }{{"edge-a", v1.ID}, {"edge-b", v2.ID}} {
+		if _, err := s.db.Exec(
+			`INSERT INTO edges (id, from_id, to_id, relation, is_current, metadata,
+			                    created_at, occurred_at, ingested_at)
+			 VALUES (?, ?, ?, 'part_of', 1, '{}',
+			         strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+			         strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+			         strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+			ed.id, ed.from, g.ID,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	remapEdgesToNode(t, s)
+
+	// Collapsed to exactly one live edge on the node triple (v1.logical → g.logical).
+	var live int
+	_ = s.db.QueryRow(
+		`SELECT COUNT(*) FROM edges WHERE from_id = ? AND to_id = ? AND relation='part_of' AND is_current=1`,
+		v1.LogicalID, g.LogicalID,
+	).Scan(&live)
+	if live != 1 {
+		t.Errorf("after remap+dedup: %d live edges, want 1", live)
+	}
+	// No edge still references a per-version entry id.
+	var stale int
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM edges WHERE from_id = ? OR to_id = ?`, v2.ID, v2.ID).Scan(&stale)
+	if stale != 0 {
+		t.Errorf("%d edges still reference per-version id %s, want 0", stale, v2.ID)
+	}
+	// Both rows preserved (1 live + 1 retired) — dedup retires, never deletes.
+	var total int
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM edges`).Scan(&total)
+	if total != 2 {
+		t.Errorf("edge rows = %d, want 2 (1 live + 1 retired)", total)
+	}
+}
+
 // --- SetGoalStatus ---
 
 func TestSetGoalStatus_SupersedesAndPreservesLogicalID(t *testing.T) {
@@ -157,7 +243,11 @@ func TestSetGoalStatus_SupersedesAndPreservesLogicalID(t *testing.T) {
 	}
 }
 
-func TestSetGoalStatus_RePointsIncomingEdges(t *testing.T) {
+// SetGoalStatus supersedes the goal, but edges key on the goal's logical_id
+// (stable, decision (a)), so the attachment survives with NO edge rewriting:
+// the original edge stays live and the activity is still listed under the new
+// goal version. (Was TestSetGoalStatus_RePointsIncomingEdges — re-point is gone.)
+func TestSetGoalStatus_KeepsAttachmentViaLogicalID(t *testing.T) {
 	s := newService(t)
 	goal, activity := setupGoalAndActivity(t, s)
 	edge, _ := s.AttachToGoal(ctx(t), activity.ID, goal.ID)
@@ -167,21 +257,23 @@ func TestSetGoalStatus_RePointsIncomingEdges(t *testing.T) {
 		t.Fatalf("SetGoalStatus: %v", err)
 	}
 
-	// Old edge superseded.
-	var oldCurrent int
-	_ = s.db.QueryRow(`SELECT is_current FROM edges WHERE id = ?`, edge.ID).Scan(&oldCurrent)
-	if oldCurrent != 0 {
-		t.Errorf("old edge is_current = %d, want 0", oldCurrent)
+	// The original edge is untouched: still live, not re-pointed.
+	var current int
+	_ = s.db.QueryRow(`SELECT is_current FROM edges WHERE id = ?`, edge.ID).Scan(&current)
+	if current != 1 {
+		t.Errorf("edge should stay live (no re-point), is_current = %d", current)
 	}
-
-	// A new live edge exists pointing at v2.ID.
-	var n int
-	_ = s.db.QueryRow(
-		`SELECT COUNT(*) FROM edges WHERE from_id = ? AND to_id = ? AND relation = 'part_of' AND is_current = 1`,
-		activity.ID, v2.ID,
-	).Scan(&n)
-	if n != 1 {
-		t.Errorf("expected 1 live re-pointed edge to v2, got %d", n)
+	// It keys on the goal's logical_id (== v2.LogicalID), not a version id.
+	if edge.ToID != v2.LogicalID {
+		t.Errorf("edge.to_id = %q, want goal logical_id %q", edge.ToID, v2.LogicalID)
+	}
+	// The activity is still attached under the new goal version.
+	acts, err := s.GetGoalActivities(ctx(t), v2.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(acts) != 1 || acts[0].LogicalID != activity.LogicalID {
+		t.Errorf("GetGoalActivities(v2) = %v, want [activity %s]", acts, activity.LogicalID)
 	}
 }
 

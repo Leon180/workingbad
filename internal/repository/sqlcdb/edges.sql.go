@@ -49,14 +49,16 @@ func (q *Queries) GetEdgeByID(ctx context.Context, id string) (Edge, error) {
 const getGoalActivitiesByLogicalID = `-- name: GetGoalActivitiesByLogicalID :many
 SELECT e.id, e.logical_id, e.type, e.title, e.body, e.source, e.source_ref, e.origin, e.repo_id, e.author, e.status, e.is_current, e.superseded_by, e.metadata, e.created_at, e.updated_at, e.occurred_at, e.ingested_at, e.actor, e.reason, e.source_event_hash, e.version, e.quality_degraded
   FROM entries AS e
-  JOIN edges   AS ed ON ed.from_id = e.id AND ed.relation = 'part_of' AND ed.is_current = 1
-  JOIN entries AS g  ON ed.to_id = g.id
- WHERE g.logical_id = (SELECT seed.logical_id FROM entries AS seed WHERE seed.id = ?)
+  JOIN edges   AS ed ON ed.from_id = e.logical_id AND ed.relation = 'part_of' AND ed.is_current = 1
+ WHERE ed.to_id = (SELECT seed.logical_id FROM entries AS seed WHERE seed.id = ?)
    AND e.type = 'activity'
    AND e.is_current = 1
  ORDER BY e.occurred_at ASC, e.ingested_at ASC
 `
 
+// Edges key on the node stable id (logical_id == node.id) since migration 0017,
+// so the activity joins by its logical_id and the goal is matched directly by
+// its logical_id (no goal-version chain join needed).
 func (q *Queries) GetGoalActivitiesByLogicalID(ctx context.Context, id string) ([]Entry, error) {
 	rows, err := q.db.QueryContext(ctx, getGoalActivitiesByLogicalID, id)
 	if err != nil {

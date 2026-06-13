@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Leon180/workingbad/internal/domain"
 )
@@ -226,7 +227,11 @@ func TestSupersede_OldMissing(t *testing.T) {
 // TestSupersede_RePointsOutgoingEdges proves that service.Supersede now
 // inherits the round-6 outgoing re-point. A live edge from V1 to G is
 // rewritten to be from V2 to G after Supersede(V1, V2).
-func TestSupersede_RePointsOutgoingEdges(t *testing.T) {
+// Superseding an entity no longer re-points its edges: they key on logical_id
+// (stable across supersede, decision (a)), so the original edge stays live and
+// the link resolves to the new version automatically. (Was
+// TestSupersede_RePointsOutgoingEdges.)
+func TestSupersede_KeepsEdgeViaLogicalID(t *testing.T) {
 	s := newService(t)
 
 	v1, _ := s.InsertEntry(ctx(t), domain.Entry{
@@ -253,31 +258,38 @@ func TestSupersede_RePointsOutgoingEdges(t *testing.T) {
 		t.Fatalf("Supersede: %v", err)
 	}
 
-	// Old edge superseded.
-	var oldEdgeCurrent int
-	_ = s.db.QueryRow(`SELECT is_current FROM edges WHERE id = ?`, edge.ID).Scan(&oldEdgeCurrent)
-	if oldEdgeCurrent != 0 {
-		t.Errorf("old edge is_current = %d, want 0", oldEdgeCurrent)
+	// The original edge is untouched: still live (no re-point).
+	var cur int
+	_ = s.db.QueryRow(`SELECT is_current FROM edges WHERE id = ?`, edge.ID).Scan(&cur)
+	if cur != 1 {
+		t.Errorf("edge should stay live (no re-point), is_current = %d", cur)
 	}
-
-	// A new live edge points from v2 to g.
-	var n int
-	_ = s.db.QueryRow(
-		`SELECT COUNT(*) FROM edges WHERE from_id = ? AND to_id = ? AND relation = 'part_of' AND is_current = 1`,
-		v2.ID, g.ID,
-	).Scan(&n)
-	if n != 1 {
-		t.Errorf("expected 1 live re-pointed outgoing edge from v2 to g, got %d", n)
+	// No edge references the new per-version id — edges key on logical_id.
+	var byNewID int
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM edges WHERE from_id = ? OR to_id = ?`, v2.ID, v2.ID).Scan(&byNewID)
+	if byNewID != 0 {
+		t.Errorf("no edge should reference the new version id %s, found %d", v2.ID, byNewID)
+	}
+	// The edge keys on the shared logical_id; the link resolves v2.logical → g.
+	if edge.FromID != v2.LogicalID {
+		t.Errorf("edge.from_id = %q, want logical_id %q", edge.FromID, v2.LogicalID)
+	}
+	live, err := s.EdgesAt(ctx(t), time.Now().UTC(),
+		EdgeFilter{Relation: domain.RelationPartOf, FromID: v2.LogicalID, ToID: g.LogicalID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(live) != 1 || live[0].ID != edge.ID {
+		t.Errorf("EdgesAt(v2.logical→g) = %v, want original edge %s", live, edge.ID)
 	}
 }
 
-// TestSupersede_RePointsBothDirections covers a single entry with both
-// incoming and outgoing live edges; supersede must rewrite both.
-func TestSupersede_RePointsBothDirections(t *testing.T) {
+// A single entity with both an incoming and an outgoing live edge: supersede
+// leaves BOTH untouched (they key on the entity's logical_id), and both still
+// resolve to the new version. (Was TestSupersede_RePointsBothDirections.)
+func TestSupersede_BothDirectionEdgesSurvive(t *testing.T) {
 	s := newService(t)
 
-	// Three entries: source → middle → sink (middle has incoming from source,
-	// outgoing to sink). Then supersede middle and verify both edges follow.
 	source, _ := s.InsertEntry(ctx(t), domain.Entry{
 		Type: domain.EntryTypeResearch, Origin: domain.OriginLocal,
 		Source: domain.SourceManual, SourceRef: "src",
@@ -294,19 +306,18 @@ func TestSupersede_RePointsBothDirections(t *testing.T) {
 		Title: "middle",
 	})
 
-	// source → middle (where middle is a goal target — actually middle is
-	// research, so we attach to sink goal). AttachToGoal requires to_id to
-	// be a goal. So: source attaches to sink-goal, middle attaches to
-	// sink-goal, middle is then superseded — outgoing edge from middle to
-	// sink-goal should re-point to middle-v2.
+	// Outgoing: middle → sink (part_of).
 	mEdge, _ := s.AttachToGoal(ctx(t), middle.ID, sink.ID)
-
-	// Add an incoming edge to middle from source via a relates_to: but
-	// AttachToGoal won't do that. Use direct DB insert for the test.
+	// Incoming: source → middle (relates_to). source/middle are fresh, so
+	// their ids equal their logical_ids — the edge is already node-keyed.
 	if _, err := s.db.Exec(
-		`INSERT INTO edges (id, from_id, to_id, relation, is_current, metadata, created_at)
-		 VALUES ('test-edge-in', ?, ?, 'relates_to', 1, '{}', datetime('now'))`,
-		source.ID, middle.ID,
+		`INSERT INTO edges (id, from_id, to_id, relation, is_current, metadata,
+		                    created_at, occurred_at, ingested_at)
+		 VALUES ('test-edge-in', ?, ?, 'relates_to', 1, '{}',
+		         strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+		         strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+		         strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+		source.LogicalID, middle.LogicalID,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -319,35 +330,30 @@ func TestSupersede_RePointsBothDirections(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Supersede: %v", err)
 	}
-
-	// Outgoing: middle → sink should now be v2 → sink.
-	var outN int
-	_ = s.db.QueryRow(
-		`SELECT COUNT(*) FROM edges WHERE from_id = ? AND to_id = ? AND relation = 'part_of' AND is_current = 1`,
-		v2.ID, sink.ID,
-	).Scan(&outN)
-	if outN != 1 {
-		t.Errorf("outgoing re-point missing: want 1 live v2→sink edge, got %d", outN)
-	}
-	var outOld int
-	_ = s.db.QueryRow(`SELECT is_current FROM edges WHERE id = ?`, mEdge.ID).Scan(&outOld)
-	if outOld != 0 {
-		t.Errorf("old outgoing edge is_current = %d, want 0", outOld)
+	if v2.LogicalID != middle.LogicalID {
+		t.Fatalf("logical_id drift: %q → %q", middle.LogicalID, v2.LogicalID)
 	}
 
-	// Incoming: source → middle should now be source → v2.
-	var inN int
-	_ = s.db.QueryRow(
-		`SELECT COUNT(*) FROM edges WHERE from_id = ? AND to_id = ? AND relation = 'relates_to' AND is_current = 1`,
-		source.ID, v2.ID,
-	).Scan(&inN)
-	if inN != 1 {
-		t.Errorf("incoming re-point missing: want 1 live source→v2 edge, got %d", inN)
+	// Outgoing edge: untouched + still live, keyed on middle's logical_id.
+	var outCur int
+	_ = s.db.QueryRow(`SELECT is_current FROM edges WHERE id = ?`, mEdge.ID).Scan(&outCur)
+	if outCur != 1 {
+		t.Errorf("outgoing edge should stay live, is_current = %d", outCur)
 	}
-	var inOld int
-	_ = s.db.QueryRow(`SELECT is_current FROM edges WHERE id = 'test-edge-in'`).Scan(&inOld)
-	if inOld != 0 {
-		t.Errorf("old incoming edge is_current = %d, want 0", inOld)
+	// Incoming edge: untouched + still live.
+	var inCur int
+	_ = s.db.QueryRow(`SELECT is_current FROM edges WHERE id = 'test-edge-in'`).Scan(&inCur)
+	if inCur != 1 {
+		t.Errorf("incoming edge should stay live, is_current = %d", inCur)
+	}
+	// Both resolve to v2 via its logical_id.
+	out, _ := s.EdgesAt(ctx(t), time.Now().UTC(), EdgeFilter{FromID: v2.LogicalID, ToID: sink.LogicalID})
+	if len(out) != 1 || out[0].ID != mEdge.ID {
+		t.Errorf("outgoing EdgesAt(v2.logical→sink) = %v, want %s", out, mEdge.ID)
+	}
+	in, _ := s.EdgesAt(ctx(t), time.Now().UTC(), EdgeFilter{ToID: v2.LogicalID})
+	if len(in) != 1 || in[0].ID != "test-edge-in" {
+		t.Errorf("incoming EdgesAt(→v2.logical) = %v, want test-edge-in", in)
 	}
 }
 
