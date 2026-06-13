@@ -123,6 +123,28 @@ type Entry struct {
 	UpdatedAt       time.Time
 }
 
+// Node is the graph-level work unit (v1.0.0 Slice D, issue #68). Entries are
+// source-immutable raw records; a Node is what the graph actually renders, and
+// an Entry maps to a Node via entry_node_map (many-to-many: split = 1 entry→N
+// nodes, aggregate = N entries→1 node). The LLM manages the mapping + the
+// node's decided/synthesised Type/Title/Body; it never edits entry content.
+//
+// Slice D1 is purely additive: the node table is populated by backfill (one
+// node per logical_id, snapshotted from the live entry version) but the live
+// read/graph path still reads entries. D2 moves supersede / FTS5 / bitemporal
+// onto nodes and flips the read path. So Node here intentionally carries only
+// the graph-content fields — no is_current / version / occurred_at yet; those
+// arrive in D2 when the supersede chain moves to the node layer.
+type Node struct {
+	ID        string // uuid v7; equals the originating logical_id for backfilled nodes
+	Type      EntryType
+	Title     string
+	Body      string
+	Status    Status
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 // Edge is a typed relationship between two entries. Append-only + supersede;
 // partial-unique `(from, to, relation) WHERE is_current = 1` keeps lookups
 // deterministic. OccurredAt mirrors the entry semantics — when the relation
