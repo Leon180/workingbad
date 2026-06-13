@@ -122,19 +122,26 @@ func TestMapEntryToNode_NotFoundOnBadIDs(t *testing.T) {
 
 // --- backfill SQL correctness (white-box) ---
 
-// backfillNodes runs the exact two INSERT...SELECT statements from
-// 0013_nodes_and_entry_node_map.sql. The migration runs them once at upgrade
-// time against existing data; in a fresh test DB the entries table is empty
-// when 0013 applies, so we re-run them here after seeding to assert the SQL
-// logic (one node per logical_id from the live version; every version mapped).
-// Kept in lockstep with the migration — if you change the backfill SQL there,
-// change it here too.
+// backfillNodes reproduces the node backfill from 0013 + 0014. The migrations
+// run once at upgrade time against existing data; in a fresh test DB the
+// entries table is empty when they apply, so we re-run the logic here after
+// seeding to assert the SQL (one node per logical_id from the live version;
+// every version mapped; D2 columns set: logical_id=id, version 1, is_current 1,
+// bitemporal pair from the live entry). Kept in lockstep with the migrations —
+// if you change the backfill SQL there, change it here too.
 func backfillNodes(t *testing.T, s *Service) {
 	t.Helper()
 	c := ctx(t)
+	// 0013 + 0014 fused: insert nodes already carrying the supersede-chain
+	// columns rather than insert-then-ALTER, since the test DB has 0014 applied.
 	if _, err := s.db.ExecContext(c,
-		`INSERT OR IGNORE INTO nodes (id, type, title, body, status, created_at, updated_at)
-		 SELECT logical_id, type, title, COALESCE(body, ''), status, created_at, updated_at
+		`INSERT OR IGNORE INTO nodes
+		   (id, logical_id, type, title, body, status, version, is_current,
+		    occurred_at, ingested_at, created_at, updated_at)
+		 SELECT logical_id, logical_id, type, title, COALESCE(body, ''), status, 1, 1,
+		        COALESCE(occurred_at, ingested_at, created_at),
+		        COALESCE(ingested_at, created_at),
+		        created_at, updated_at
 		 FROM entries WHERE is_current = 1`); err != nil {
 		t.Fatalf("backfill nodes: %v", err)
 	}
@@ -216,5 +223,151 @@ func TestBackfill_OneNodePerLogicalID(t *testing.T) {
 	// The standalone activity backfilled to its own node.
 	if _, err := s.GetNode(c, act.LogicalID); err != nil {
 		t.Errorf("standalone activity node missing: %v", err)
+	}
+}
+
+// --- D2 step 1: node supersede chain (model A) ---
+
+func TestCreateNode_IsOwnLogicalRoot(t *testing.T) {
+	s := newService(t)
+	got, err := s.CreateNode(ctx(t), domain.Node{
+		Type: domain.EntryTypeResearch, Title: "a fresh node",
+	})
+	if err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
+	if got.LogicalID != got.ID {
+		t.Errorf("logical_id = %q, want = id %q", got.LogicalID, got.ID)
+	}
+	if got.Version != 1 || !got.IsCurrent {
+		t.Errorf("version/is_current = %d/%v, want 1/true", got.Version, got.IsCurrent)
+	}
+	if got.OccurredAt.IsZero() || got.IngestedAt.IsZero() {
+		t.Error("bitemporal pair not stamped")
+	}
+}
+
+func TestSupersedeNode_AppendsVersionAndRetiresOld(t *testing.T) {
+	s := newService(t)
+	c := ctx(t)
+	v1, err := s.CreateNode(c, domain.Node{
+		Type: domain.EntryTypeGoal, Title: "ship D2 (v1)", Status: domain.StatusOpen,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	v2, err := s.SupersedeNode(c, v1.ID, v1.Version, domain.Node{
+		Type: domain.EntryTypeGoal, Title: "ship D2 (v2)", Status: domain.StatusInProgress,
+	})
+	if err != nil {
+		t.Fatalf("SupersedeNode: %v", err)
+	}
+
+	// New version: fresh id, same logical_id, version+1, live, occurred inherited.
+	if v2.ID == v1.ID {
+		t.Error("supersede must mint a fresh id")
+	}
+	if v2.LogicalID != v1.LogicalID {
+		t.Errorf("logical_id changed: %q → %q", v1.LogicalID, v2.LogicalID)
+	}
+	if v2.Version != v1.Version+1 {
+		t.Errorf("version = %d, want %d", v2.Version, v1.Version+1)
+	}
+	if !v2.IsCurrent {
+		t.Error("new version not live")
+	}
+	if !v2.OccurredAt.Equal(v1.OccurredAt) {
+		t.Errorf("occurred_at not inherited: %v → %v", v1.OccurredAt, v2.OccurredAt)
+	}
+
+	// Old version: retired, points forward.
+	old, err := s.GetNode(c, v1.ID)
+	if err != nil {
+		t.Fatalf("GetNode(old): %v", err)
+	}
+	if old.IsCurrent {
+		t.Error("old version still live")
+	}
+	if old.SupersededBy != v2.ID {
+		t.Errorf("old.superseded_by = %q, want %q", old.SupersededBy, v2.ID)
+	}
+
+	// Live lookup resolves to v2 only.
+	live, err := s.GetLiveNodeByLogicalID(c, v1.LogicalID)
+	if err != nil {
+		t.Fatalf("GetLiveNodeByLogicalID: %v", err)
+	}
+	if live.ID != v2.ID || live.Title != "ship D2 (v2)" || live.Status != domain.StatusInProgress {
+		t.Errorf("live node = %+v, want v2", live)
+	}
+}
+
+func TestSupersedeNode_VersionConflict(t *testing.T) {
+	s := newService(t)
+	c := ctx(t)
+	v1, err := s.CreateNode(c, domain.Node{Type: domain.EntryTypeResearch, Title: "v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Stale expectedVersion (caller saw v1 but live is already past it — here
+	// we just pass a wrong number) → conflict, no write.
+	_, err = s.SupersedeNode(c, v1.ID, v1.Version+5, domain.Node{
+		Type: domain.EntryTypeResearch, Title: "v2 attempt",
+	})
+	if !errors.Is(err, ErrVersionConflict) {
+		t.Fatalf("expected ErrVersionConflict, got %v", err)
+	}
+	// The chain is untouched: v1 still live.
+	live, err := s.GetLiveNodeByLogicalID(c, v1.LogicalID)
+	if err != nil || live.ID != v1.ID {
+		t.Errorf("v1 should remain live, got %+v err=%v", live, err)
+	}
+}
+
+func TestSupersedeNode_RejectsSupersededAndMissing(t *testing.T) {
+	s := newService(t)
+	c := ctx(t)
+	v1, err := s.CreateNode(c, domain.Node{Type: domain.EntryTypeDiscuss, Title: "v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v2, err := s.SupersedeNode(c, v1.ID, v1.Version, domain.Node{Type: domain.EntryTypeDiscuss, Title: "v2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Superseding an already-retired version is rejected (not the live head).
+	if _, err := s.SupersedeNode(c, v1.ID, 0, domain.Node{Type: domain.EntryTypeDiscuss, Title: "v3?"}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("superseding retired version: expected ErrNotFound, got %v", err)
+	}
+	// Superseding a non-existent id is rejected.
+	if _, err := s.SupersedeNode(c, "0192f6c0-7e31-7c2b-9b8a-ffffffffffff", 0, domain.Node{Type: domain.EntryTypeDiscuss, Title: "x"}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("superseding missing id: expected ErrNotFound, got %v", err)
+	}
+	// Superseding the live head (v2) with skip-check (0) still works.
+	if _, err := s.SupersedeNode(c, v2.ID, 0, domain.Node{Type: domain.EntryTypeDiscuss, Title: "v3"}); err != nil {
+		t.Errorf("superseding live head with expectedVersion=0: %v", err)
+	}
+}
+
+func TestSupersedeNode_Validation(t *testing.T) {
+	s := newService(t)
+	c := ctx(t)
+	v1, err := s.CreateNode(c, domain.Node{Type: domain.EntryTypeResearch, Title: "v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Replacement must satisfy the same per-type contract as CreateNode.
+	if _, err := s.SupersedeNode(c, v1.ID, v1.Version, domain.Node{Type: domain.EntryTypeGoal, Title: "no status"}); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("goal replacement without status: expected ErrInvalidInput, got %v", err)
+	}
+}
+
+func TestGetLiveNodeByLogicalID_NotFound(t *testing.T) {
+	s := newService(t)
+	_, err := s.GetLiveNodeByLogicalID(ctx(t), "0192f6c0-7e31-7c2b-9b8a-ffffffffffff")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
 	}
 }

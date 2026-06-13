@@ -129,20 +129,28 @@ type Entry struct {
 // nodes, aggregate = N entries→1 node). The LLM manages the mapping + the
 // node's decided/synthesised Type/Title/Body; it never edits entry content.
 //
-// Slice D1 is purely additive: the node table is populated by backfill (one
-// node per logical_id, snapshotted from the live entry version) but the live
-// read/graph path still reads entries. D2 moves supersede / FTS5 / bitemporal
-// onto nodes and flips the read path. So Node here intentionally carries only
-// the graph-content fields — no is_current / version / occurred_at yet; those
-// arrive in D2 when the supersede chain moves to the node layer.
+// Slice D2 (model A, issue #69) gives the node its own supersede chain:
+// entries become immutable raw facts; the NODE is the editable/versioned
+// graph unit. LogicalID is the stable identity across the node's versions
+// (a node supersede mints a new ID but keeps LogicalID); Version is the
+// monotonic per-LogicalID counter for optimistic locking; IsCurrent marks
+// the live version; OccurredAt/IngestedAt carry the bitemporal pair onto
+// the node layer. D2 ships incrementally — this struct holds the columns;
+// later D2 sub-PRs move FTS5, the read path, and edges onto nodes.
 type Node struct {
-	ID        string // uuid v7; equals the originating logical_id for backfilled nodes
-	Type      EntryType
-	Title     string
-	Body      string
-	Status    Status
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID           string // uuid v7; a node supersede mints a fresh one
+	LogicalID    string // stable identity across the node's supersede chain
+	Type         EntryType
+	Title        string
+	Body         string
+	Status       Status
+	Version      int
+	IsCurrent    bool
+	SupersededBy string // node id pointing forward; "" when IsCurrent
+	OccurredAt   time.Time
+	IngestedAt   time.Time
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // Edge is a typed relationship between two entries. Append-only + supersede;
