@@ -14,7 +14,10 @@ import (
 
 const (
 	defaultConfigPath = "./config.yaml"
-	binaryVersion     = "0.0.0-dev"
+	// binaryVersion is bumped automatically by release-please from
+	// conventional commits — the annotation below is the update anchor.
+	// Do not edit by hand; merge the release PR instead.
+	binaryVersion = "0.1.0" // x-release-please-version
 )
 
 func main() {

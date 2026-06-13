@@ -1,0 +1,29 @@
+name: release-please
+
+# Conventional-commit driven versioning. On every push to main, release-please
+# accumulates the un-released commits and maintains a single open "release PR"
+# that bumps the version (feat→minor, fix/perf→patch; pre-1.0 breaking stays in
+# 0.x) + updates CHANGELOG.md + bumps cmd/workingbad/main.go's binaryVersion.
+# Merging that PR cuts a git tag + GitHub Release. The review gate is the PR
+# itself — nothing is tagged without a human merge ("我還是會 review").
+#
+# This is DECOUPLED from the schema-freeze marker: release-please owns the
+# v0.x.y tags; the `schema-frozen` tag is pushed by hand (see
+# scripts/check-migration-gates.sh) once the node model lands.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

@@ -12,7 +12,7 @@
 
 ## 技術約束（不可妥協）
 - **單一 Go binary**，輕量、可跨平台編譯。榜樣：Gitea。
-- 儲存：`modernc.org/sqlite`(純 Go、免 cgo,FTS5 內建);migration 走 `goose v3 + embed.FS`、forward-only、startup 自動、`v0.1.0` tag 凍結後純 additive。
+- 儲存：`modernc.org/sqlite`(純 Go、免 cgo,FTS5 內建);migration 走 `goose v3 + embed.FS`、forward-only、startup 自動、**`schema-frozen` marker tag 後純 additive**(marker 前——含 Slice D node 手術——可改既有 migration);版號由 release-please 依 conventional commit 自動 bump,與 schema-freeze 脫鉤。
 - Web UI：`net/http` + `embed.FS` 打包進 binary，localhost；**不引重前端框架**。
 - 設定：單一 `config.yaml`，「下載 → 設好 config → 直接跑」。
 - AI 為**必要能力**，setup 擇一 local(Ollama,隱私)/api(Claude,送雲)。**型別由 LLM 依內容判斷**、activity 合成需模型(無 fallback，建議 lazy)；branch 僅分組(免費)。
