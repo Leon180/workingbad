@@ -312,13 +312,26 @@ func (s *Service) SearchNodes(ctx context.Context, query string, limit int) ([]d
 	if limit <= 0 {
 		limit = defaultSearchLimit
 	}
+	// Top-K happens INSIDE the FTS table (ORDER BY rank LIMIT in the subquery)
+	// so FTS5 returns only the K best node_ids by its native rank order, then
+	// we join those few rows back to nodes. Ordering by bm25 in the outer join
+	// instead makes SQLite materialise every match into a temp b-tree before
+	// the LIMIT — wasteful on a large corpus with a broad query. `rank` is the
+	// FTS5 built-in (= bm25 with default weights); lower = closer match.
+	// nodes_fts holds is_current=1 rows only (maintenance contract), so the K
+	// inner rows are already all live; the outer n.is_current=1 is belt-and-braces.
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+nodeColumns+`
-		   FROM nodes_fts
-		   JOIN nodes n ON n.id = nodes_fts.node_id
-		  WHERE nodes_fts MATCH ? AND n.is_current = 1
-		  ORDER BY bm25(nodes_fts)
-		  LIMIT ?`, match, limit)
+		   FROM nodes n
+		   JOIN (
+		     SELECT node_id, rank
+		       FROM nodes_fts
+		      WHERE nodes_fts MATCH ?
+		      ORDER BY rank
+		      LIMIT ?
+		   ) fts ON n.id = fts.node_id
+		  WHERE n.is_current = 1
+		  ORDER BY fts.rank`, match, limit)
 	if err != nil {
 		return nil, fmt.Errorf("repository: search nodes: %w", err)
 	}

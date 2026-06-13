@@ -150,9 +150,10 @@ func backfillNodes(t *testing.T, s *Service) {
 		 SELECT id, logical_id FROM entries`); err != nil {
 		t.Fatalf("backfill map: %v", err)
 	}
-	// 0015: backfill nodes_fts from the live nodes just inserted.
+	// 0015: backfill nodes_fts from the live nodes just inserted. OR IGNORE
+	// keeps a second call idempotent (defensive — tests use a fresh DB each).
 	if _, err := s.db.ExecContext(c,
-		`INSERT INTO nodes_fts (node_id, title, body)
+		`INSERT OR IGNORE INTO nodes_fts (node_id, title, body)
 		 SELECT id, title, body FROM nodes WHERE is_current = 1`); err != nil {
 		t.Fatalf("backfill nodes_fts: %v", err)
 	}
@@ -451,15 +452,15 @@ func TestSearchNodes_RankingAndLimit(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("got %d hits, want 2", len(got))
 	}
-	if got[0].ID != strong.ID {
-		t.Errorf("ranking wrong: best = %s, want %s (strong)", got[0].ID, strong.ID)
+	if got[0].ID != strong.ID || got[1].ID != weak.ID {
+		t.Errorf("ranking wrong: got [%s, %s], want [%s (strong), %s (weak)]",
+			got[0].ID, got[1].ID, strong.ID, weak.ID)
 	}
 	// limit is honoured.
 	one, err := s.SearchNodes(c, "cache", 1)
 	if err != nil || len(one) != 1 || one[0].ID != strong.ID {
 		t.Errorf("limit=1 = %v err=%v, want [%s]", one, err, strong.ID)
 	}
-	_ = weak
 }
 
 // Arbitrary user input — FTS5 operators / quotes / parens — must never error.
@@ -469,7 +470,7 @@ func TestSearchNodes_SanitisesInput(t *testing.T) {
 	if _, err := s.CreateNode(c, domain.Node{Type: domain.EntryTypeActivity, Title: "normal node"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, q := range []string{`"`, `AND OR NOT`, `foo(bar`, `near/2`, `a* OR b`, `"unterminated`} {
+	for _, q := range []string{`"`, `AND OR NOT`, `foo(bar`, `near/2`, `a* OR b`, `"unterminated`, `\`, `title:foo`, `NEAR(a b)`, `""`} {
 		if _, err := s.SearchNodes(c, q, 10); err != nil {
 			t.Errorf("SearchNodes(%q) errored on hostile input: %v", q, err)
 		}
