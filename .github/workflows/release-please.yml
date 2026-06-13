@@ -4,12 +4,20 @@ name: release-please
 # accumulates the un-released commits and maintains a single open "release PR"
 # that bumps the version (feat→minor, fix/perf→patch; pre-1.0 breaking stays in
 # 0.x) + updates CHANGELOG.md + bumps cmd/workingbad/main.go's binaryVersion.
-# Merging that PR cuts a git tag + GitHub Release. The review gate is the PR
-# itself — nothing is tagged without a human merge ("我還是會 review").
+# When that PR's required CI is green it auto-merges, cutting a git tag + Release.
 #
-# This is DECOUPLED from the schema-freeze marker: release-please owns the
-# v0.x.y tags; the `schema-frozen` tag is pushed by hand (see
-# scripts/check-migration-gates.sh) once the node model lands.
+# Why a fine-grained PAT (secrets.RELEASE_PLEASE_TOKEN) instead of GITHUB_TOKEN:
+#   1. the default token can only open PRs when a repo flag is on; and crucially
+#   2. a PR opened with GITHUB_TOKEN does NOT trigger CI (the `pull_request`
+#      event is suppressed), and a merge performed with GITHUB_TOKEN does NOT
+#      cascade to re-run this workflow — so the tag would never be cut. A
+#      real-user PAT makes CI run on the release PR and makes the merge
+#      re-trigger the tag-cutting step. The PAT is fine-grained, single-repo,
+#      Contents:RW + Pull-requests:RW only (least privilege).
+#
+# DECOUPLED from the schema-freeze marker: release-please owns the v0.x.y tags;
+# the `schema-frozen` tag is pushed by hand (see scripts/check-migration-gates.sh)
+# once the node model lands.
 
 on:
   push:
@@ -24,6 +32,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
+        id: release
         with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      # When a release PR is open (just created or updated this run), arm
+      # auto-merge so it merges itself once the branch-protection required
+      # checks pass. Uses the PAT so the eventual merge is attributed to a real
+      # user and cascades to re-run this workflow's tag-cutting step.
+      # Idempotent — re-arming an already-armed PR is a harmless no-op.
+      - name: Arm auto-merge on the release PR
+        if: ${{ steps.release.outputs.pr }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: gh pr merge --auto --squash "${{ fromJSON(steps.release.outputs.pr).number }}"
