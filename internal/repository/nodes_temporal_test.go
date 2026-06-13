@@ -9,18 +9,23 @@ import (
 
 // --- D2 step 3: node-layer time-travel (ListNodesAt / NodeHistory) ---
 
-// ListNodesAt at an instant between v1 and v2 must reveal v1 (the version that
-// was live then), and after v2's ingest must reveal v2 — node analogue of
-// TestListEntriesAt_RevealsSupersededVersion.
+// ListNodesAt reconstructs the version live at a given instant — node analogue
+// of TestListEntriesAt_RevealsSupersededVersion. Deterministic: v1 is stamped
+// with a fixed past instant (CreateNode honours a non-zero OccurredAt/
+// IngestedAt), and the supersede stamps v2's IngestedAt with now(), so the two
+// instants are far apart with no wall-clock race.
 func TestListNodesAt_RevealsSupersededVersion(t *testing.T) {
 	s := newService(t)
 	c := ctx(t)
 
-	v1, err := s.CreateNode(c, domain.Node{Type: domain.EntryTypeDecision, Title: "pick approach A"})
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	v1, err := s.CreateNode(c, domain.Node{
+		Type: domain.EntryTypeDecision, Title: "pick approach A",
+		OccurredAt: t0, IngestedAt: t0,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(3 * time.Millisecond) // distinct ingested_at across the supersede
 	v2, err := s.SupersedeNode(c, v1.ID, v1.Version, domain.Node{
 		Type: domain.EntryTypeDecision, Title: "pick approach B",
 	})
@@ -28,16 +33,19 @@ func TestListNodesAt_RevealsSupersededVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// At v1's ingest instant the supersede (v2) hadn't happened yet → v1 live.
-	atV1, err := s.ListNodesAt(c, v1.IngestedAt, NodeListFilter{})
+	// At t0: v1 exists & occurred; its successor v2 was ingested now() which is
+	// strictly after t0, so the EXISTS predicate keeps v1 live.
+	atV1, err := s.ListNodesAt(c, t0, NodeListFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(atV1) != 1 || atV1[0].ID != v1.ID {
-		t.Errorf("ListNodesAt(v1.ingested) = %v, want [v1 %s]", ids(atV1), v1.ID)
+		t.Errorf("ListNodesAt(t0) = %v, want [v1 %s]", ids(atV1), v1.ID)
 	}
 
-	// At v2's ingest instant v1 has a successor ingested <= asOf → v2 live.
+	// At v2.IngestedAt: the EXISTS predicate (successor.ingested_at > asOf) is
+	// false for v1 — its supersede has landed — so v1 is excluded; v2
+	// (ingested_at <= asOf, no successor) is the live version.
 	atV2, err := s.ListNodesAt(c, v2.IngestedAt, NodeListFilter{})
 	if err != nil {
 		t.Fatal(err)

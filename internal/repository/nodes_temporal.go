@@ -58,14 +58,21 @@ func (s *Service) ListNodesAt(ctx context.Context, asOf time.Time, filter NodeLi
 		args = append(args, string(filter.Type))
 	}
 	if !filter.IncludeArchived {
+		// COALESCE folds NULL → '' so non-goal nodes (status NULL/'') are kept;
+		// only an explicit 'archived' status is excluded.
 		where = append(where, "COALESCE(n.status, '') != 'archived'")
 	}
 	args = append(args, filter.Limit)
 
+	// occurred_at is inherited across a supersede, so a chain's versions share
+	// it and distinct chains can tie; the ingested_at + id tiebreakers make the
+	// order total and the result deterministic.
 	q := `SELECT ` + nodeColumns + `
             FROM nodes n
            WHERE ` + strings.Join(where, " AND ") +
-		` ORDER BY COALESCE(n.occurred_at, n.ingested_at, n.created_at) DESC LIMIT ?`
+		` ORDER BY COALESCE(n.occurred_at, n.ingested_at, n.created_at) DESC,
+                   COALESCE(n.ingested_at, n.created_at) DESC, n.id ASC
+           LIMIT ?`
 
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
