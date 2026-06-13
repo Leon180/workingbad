@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/Leon180/workingbad/compare/v0.3.0...v0.4.0) (2026-06-13)
+
+
+### Features
+
+* **repo:** bitemporal time-travel over the node layer (Slice D2 step 3) ([#87](https://github.com/Leon180/workingbad/issues/87)) ([47f230d](https://github.com/Leon180/workingbad/commit/47f230d6c0fa050025a823903664384e93b543ad))
+
 ## [0.3.0](https://github.com/Leon180/workingbad/compare/v0.2.0...v0.3.0) (2026-06-13)
 
 
