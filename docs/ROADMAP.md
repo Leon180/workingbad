@@ -150,10 +150,15 @@ AI 是必要能力,無 rule fallback。把 Phase 1 mock 的 AIProvider 換成真
 - Go ≥ 1.25(`http.CrossOriginProtection`)、`modernc.org/sqlite`(FTS5 內建)、`goose v3 + embed.FS`、`knadh/koanf v2 + go-playground/validator v10`、`urfave/cli v3`、`net/http + html/template + htmx`、`google/uuid` v7、`go-git`(patch-id 自寫)、`viant/sqlite-vec`(備)、`Ollama` + `anthropic-sdk-go`(Phase 3)。
 
 **Migration 紀律**
-- forward-only;**`v0.1.0` tag 為凍結點**(pre-1.0 可編輯未發布檔;tag 後純 additive,**永不改舊檔不寫 down**)。
+- forward-only;**`schema-frozen` marker tag 為凍結點**(marker 前可編輯未凍結檔——含 Slice D node 手術改既有 migration;marker 後純 additive,**永不改舊檔不寫 down**)。
+  - 2026-06-13 脫鉤:凍結點從 `v0.1.0` 版號 tag 改為**獨立 `schema-frozen` tag**。原因——版號改由 release-please 依 conventional commit 自動 bump,若仍綁 `v0.1.0` 會在 release-please 首次 cut v0.1.0 時誤觸凍結(可能在 Slice D 未完成前)。marker 由人工在 node 模型(Slice D)驗證綠後 push。見 [docs/grill/2026-06-13-v1-pipeline-decisions.md](grill/2026-06-13-v1-pipeline-decisions.md)。
 - startup 自動 migrate + 每檔單一 tx + 失敗 fatal abort(dirty state 結構消除)。
-- 三條 CI gate:已 tag 檔不可變 / 編號連續 / version 與檔數一致。
+- 三條 CI gate:已凍結檔不可變 / 編號連續 / version 與檔數一致。
 - 測試隔離:每測 `t.TempDir()` 獨立檔 + 跑全 migration;**禁裸 `:memory:`**。
+
+**版本機制**(2026-06-13)
+- release-please 依 conventional commit 自動維護版號(feat→minor / fix·perf→patch / pre-1.0 breaking 留 0.x) + CHANGELOG + bump `binaryVersion`,開 reviewable release PR,merge 才 cut tag。
+- **能力里程碑**(跨源護城河、雙向同步…)是 GitHub Release 的 notes 敘事,**不是特定版號**;binary 散布仍留 v1.0.0。
 
 **Web 安全**(不可逆即設,Slice B 起點)
 - 127.0.0.1 binding + Host allowlist middleware + GET/POST 動詞分離 + `http.CrossOriginProtection`。

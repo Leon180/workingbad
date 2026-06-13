@@ -3,17 +3,23 @@
 #
 # Three CI gates that enforce the migration discipline locked in ROADMAP
 # "Migration 紀律":
-#   gate-1 immutable-tagged:  post v0.1.0, files at the tag must not change
+#   gate-1 immutable-tagged:  post schema-frozen marker, files at the tag must not change
 #   gate-2 sequential:        numbering is 0001, 0002, ... with no gaps
 #   gate-3 count-matches-max: number of files == highest version
 #
-# Pre-v0.1.0 gate-1 is a no-op (we may still edit/squash unreleased files).
+# Pre-freeze gate-1 is a no-op (we may still edit/squash unreleased files —
+# including the Slice D node-model surgery that rewrites existing migrations).
 # Exits non-zero on any failure so CI fails loudly.
+#
+# The freeze marker is a DEDICATED tag `schema-frozen`, intentionally NOT the
+# semver release tag. release-please auto-creates v0.x.y version tags; coupling
+# the freeze to those would silently freeze the schema the moment v0.1.0 was
+# cut. Push `schema-frozen` by hand once the node model (Slice D) is verified.
 
 set -euo pipefail
 
 MIG_DIR="internal/migrations"
-FROZEN_TAG="v0.1.0"
+FROZEN_TAG="schema-frozen"
 
 cd "$(git rev-parse --show-toplevel)"
 
@@ -67,7 +73,7 @@ gate_count_matches() {
 
 gate_immutable_tagged() {
   if ! git rev-parse --verify --quiet "$FROZEN_TAG" >/dev/null 2>&1; then
-    echo "SKIP gate-1 (immutable):   tag ${FROZEN_TAG} does not exist yet (pre-1.0)"
+    echo "SKIP gate-1 (immutable):   tag ${FROZEN_TAG} does not exist yet (pre-freeze)"
     return 0
   fi
   local changed
