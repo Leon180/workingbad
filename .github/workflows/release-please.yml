@@ -47,4 +47,7 @@ jobs:
         if: ${{ steps.release.outputs.pr }}
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          # This job never checks out the repo, so gh can't infer it from a
+          # local .git — pass it explicitly or gh errors "not a git repository".
+          GH_REPO: ${{ github.repository }}
         run: gh pr merge --auto --squash "${{ fromJSON(steps.release.outputs.pr).number }}"
