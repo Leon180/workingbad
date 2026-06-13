@@ -8,6 +8,13 @@
 -- only equips nodes with the versioning + bitemporal columns and the
 -- SupersedeNode mechanism so the rest of D2 can build on it.
 
+-- logical_id is added nullable: SQLite ALTER ADD COLUMN cannot attach NOT NULL
+-- without a DEFAULT (which would be wrong here — the value is backfilled below)
+-- and cannot ADD a CHECK constraint to an existing table at all. Every writer
+-- populates it (CreateNode sets logical_id=id; SupersedeNode inherits it; the
+-- backfill below sets it), and idx_nodes_logical_live only enforces uniqueness
+-- on non-NULL live rows. The NOT NULL DDL enforcement is deferred to the D2
+-- read-path-flip sub-PR, which rebuilds the nodes table anyway (#69).
 -- +goose StatementBegin
 ALTER TABLE nodes ADD COLUMN logical_id TEXT;
 -- +goose StatementEnd

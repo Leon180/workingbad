@@ -170,10 +170,24 @@ func (s *Service) SupersedeNode(ctx context.Context, oldID string, expectedVersi
 	// index is checked per-statement, so inserting the new live row while the
 	// old is still is_current=1 would violate it. Flip-then-insert keeps at
 	// most one live row per logical chain at every statement boundary.
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE nodes SET is_current = 0, superseded_by = ?, updated_at = ? WHERE id = ?`,
-		r.ID, now.Format(time.RFC3339Nano), oldID); err != nil {
+	//
+	// The WHERE … AND is_current = 1 guard + RowsAffected check makes the
+	// optimistic lock explicit in the SQL rather than relying solely on the
+	// single-connection serialization (db.go MaxOpenConns(1)): if a concurrent
+	// writer already retired this head between our SELECT and here, the UPDATE
+	// touches 0 rows and we surface ErrVersionConflict instead of an opaque
+	// UNIQUE failure at the subsequent INSERT.
+	res, err := tx.ExecContext(ctx,
+		`UPDATE nodes SET is_current = 0, superseded_by = ?, updated_at = ?
+		   WHERE id = ? AND is_current = 1`,
+		r.ID, now.Format(time.RFC3339Nano), oldID)
+	if err != nil {
 		return domain.Node{}, fmt.Errorf("repository: retire node %s: %w", oldID, err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return domain.Node{}, fmt.Errorf("repository: retire node %s rows: %w", oldID, err)
+	} else if n != 1 {
+		return domain.Node{}, fmt.Errorf("%w: node %s was concurrently superseded", ErrVersionConflict, oldID)
 	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO nodes
@@ -259,7 +273,7 @@ func (s *Service) NodesForEntry(ctx context.Context, entryID string) ([]domain.N
 		   FROM entry_node_map m
 		   JOIN nodes n ON n.id = m.node_id
 		  WHERE m.entry_id = ?
-		  ORDER BY created_at`, entryID)
+		  ORDER BY n.created_at`, entryID)
 	if err != nil {
 		return nil, fmt.Errorf("repository: nodes for entry: %w", err)
 	}
