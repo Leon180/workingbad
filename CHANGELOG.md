@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/Leon180/workingbad/compare/v0.2.0...v0.3.0) (2026-06-13)
+
+
+### Features
+
+* **repo:** FTS5 full-text search over the node layer (Slice D2 step 2) ([#84](https://github.com/Leon180/workingbad/issues/84)) ([7761649](https://github.com/Leon180/workingbad/commit/7761649f5ea50808c194aa87024f84051c48f949))
+
 ## [0.2.0](https://github.com/Leon180/workingbad/compare/v0.1.0...v0.2.0) (2026-06-13)
 
 
