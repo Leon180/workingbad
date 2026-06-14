@@ -130,6 +130,45 @@ func allCommands() []*cli.Command {
 			Action: actionHistory,
 		},
 		{
+			Name:  "node",
+			Usage: "inspect the node layer (graph work units; mirrors the /nodes web view)",
+			Description: "Nodes are the graph-level work units curated from entries (backfill +\n" +
+				"manual ops + the future LLM pipeline). Entries are the raw records;\n" +
+				"`node list` / `node show` are the CLI surface for the curated graph.",
+			Commands: []*cli.Command{
+				{
+					Name:  "list",
+					Usage: "list live nodes (--at for a past snapshot, --q for full-text search)",
+					Description: "Without flags: every is_current=1 node, newest first. --at gives the\n" +
+						"bitemporal snapshot; --q runs an FTS5 (bm25) search over live nodes\n" +
+						"(and ignores --type/--at/--include-archived).\n\n" +
+						"EXAMPLES:\n" +
+						"  workingbad node list\n" +
+						"  workingbad node list --type goal\n" +
+						"  workingbad node list --q \"vector index\"\n" +
+						"  workingbad node list --at 2026-06-08T14:00:00Z",
+					Flags: []cli.Flag{
+						&cli.StringFlag{Name: "type", Usage: "show only nodes of this type (activity|research|discuss|decision|goal)"},
+						&cli.IntFlag{Name: "limit", Value: 20, Usage: "stop after printing this many rows"},
+						&cli.StringFlag{Name: "at", Usage: "time-travel snapshot at RFC3339 or YYYY-MM-DD (midnight UTC)"},
+						&cli.StringFlag{Name: "q", Usage: "full-text search (bm25) over live nodes; ignores --type/--at/--include-archived"},
+						&cli.BoolFlag{Name: "include-archived", Usage: "include nodes whose status is 'archived'"},
+					},
+					Action: actionNodeList,
+				},
+				{
+					Name:      "show",
+					Usage:     "print a node's supersede-chain history (bitemporal git log)",
+					ArgsUsage: "<node-id>",
+					Description: "Resolves <node-id> to its chain and prints every version with occurred_at\n" +
+						"next to ingested_at; the current version is marked.\n\n" +
+						"EXAMPLE:\n" +
+						"  workingbad node show 0192f6c0-7e31-7c2b-9b8a-1b2c3d4e5f60",
+					Action: actionNodeShow,
+				},
+			},
+		},
+		{
 			Name:      "attach",
 			Usage:     "link an entry under a goal (creates a part_of edge)",
 			ArgsUsage: "<entry-id> <goal-id>",
@@ -420,6 +459,82 @@ func actionHistory(ctx context.Context, c *cli.Command) error {
 	})
 }
 
+// actionNodeList is the node-layer analogue of actionList: live nodes, or a
+// past snapshot with --at, or an FTS5 search with --q.
+func actionNodeList(ctx context.Context, c *cli.Command) error {
+	return withService(c, func(ctx context.Context, svc *repository.Service) error {
+		filter := repository.NodeListFilter{
+			Type:            domain.EntryType(c.String("type")),
+			Limit:           int(c.Int("limit")),
+			IncludeArchived: c.Bool("include-archived"),
+		}
+		if q := c.String("q"); q != "" {
+			nodes, err := svc.SearchNodes(ctx, q, filter.Limit)
+			if err != nil {
+				return err
+			}
+			printNodes(os.Stdout, nodes)
+			return nil
+		}
+		if atStr := c.String("at"); atStr != "" {
+			asOf, err := parseAt(atStr)
+			if err != nil {
+				return fmt.Errorf("invalid --at: %w", err)
+			}
+			nodes, err := svc.ListNodesAt(ctx, asOf, filter)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("# node graph at %s\n", asOf.Format(time.RFC3339))
+			printNodes(os.Stdout, nodes)
+			return nil
+		}
+		nodes, err := svc.ListNodes(ctx, filter)
+		if err != nil {
+			return err
+		}
+		printNodes(os.Stdout, nodes)
+		return nil
+	})
+}
+
+// actionNodeShow walks a node's supersede chain (analogue of actionHistory).
+func actionNodeShow(ctx context.Context, c *cli.Command) error {
+	args := c.Args().Slice()
+	if len(args) < 1 {
+		return errors.New("usage: workingbad node show <node-id>")
+	}
+	return withService(c, func(ctx context.Context, svc *repository.Service) error {
+		node, err := svc.GetNode(ctx, args[0])
+		if err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				fmt.Println("(no such node)")
+				return nil
+			}
+			return err
+		}
+		history, err := svc.NodeHistory(ctx, node.LogicalID)
+		if err != nil {
+			return err
+		}
+		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		_, _ = fmt.Fprintln(tw, "VERSION\tID\tOCCURRED_AT\tINGESTED_AT\tTITLE")
+		for _, n := range history {
+			marker := ""
+			if n.IsCurrent {
+				marker = " (current)"
+			}
+			_, _ = fmt.Fprintf(tw, "v%d\t%s\t%s\t%s\t%s%s\n",
+				n.Version, n.ID,
+				n.OccurredAt.Format(time.RFC3339),
+				n.IngestedAt.Format(time.RFC3339),
+				n.Title, marker)
+		}
+		_ = tw.Flush()
+		return nil
+	})
+}
+
 // parseAt accepts either a full RFC3339 timestamp or a date-only string
 // (interpreted as midnight UTC). Relative parsing ("1h ago", "yesterday")
 // is intentionally not supported — a tiny scope creep that would only
@@ -524,6 +639,23 @@ func printEntries(w io.Writer, entries []domain.Entry) {
 			status = "-"
 		}
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", e.ID, e.Type, status, e.Title)
+	}
+	_ = tw.Flush()
+}
+
+func printNodes(w io.Writer, nodes []domain.Node) {
+	if len(nodes) == 0 {
+		_, _ = fmt.Fprintln(w, "(no nodes)")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "ID\tTYPE\tSTATUS\tVERSION\tTITLE")
+	for _, n := range nodes {
+		status := string(n.Status)
+		if status == "" {
+			status = "-"
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\tv%d\t%s\n", n.ID, n.Type, status, n.Version, n.Title)
 	}
 	_ = tw.Flush()
 }
