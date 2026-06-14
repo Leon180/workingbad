@@ -483,8 +483,9 @@ func (s *Service) supersedeEntryInTx(ctx context.Context, qtx *sqlcdb.Queries, o
 }
 
 // supersedeEntryInTxWithExpected flips an existing is_current=1 entry to
-// superseded, removes its FTS row, writes the replacement, and re-points
-// every live edge (both directions) — all inside the supplied tx.
+// superseded, removes its FTS row, and writes the replacement — all inside the
+// supplied tx. Edges need no rewriting: they key on logical_id (decision (a)),
+// which the replacement inherits.
 //
 // expectedVersion enforces optimistic locking when > 0: if the live row's
 // Version does not match, the call fails with ErrVersionConflict and the
@@ -557,11 +558,11 @@ func (s *Service) supersedeEntryInTxWithExpected(ctx context.Context, qtx *sqlcd
 	}); err != nil {
 		return fmt.Errorf("repository: fts insert replacement: %w", err)
 	}
-	// Re-point every live edge touching oldID to newID — both incoming
-	// (to_id was oldID) and outgoing (from_id was oldID). Round-6 contract.
-	// This makes re-Summarize preserve attached goal views: a goal that had
-	// `part_of` from old activity now has `part_of` from new activity.
-	return rePointAllLiveEdges(ctx, qtx, oldID, replacement.ID)
+	// No edge re-pointing: edges key on logical_id (decision (a), migration
+	// 0017), and supersede preserves logical_id, so every edge touching this
+	// entity stays valid automatically. The old rePointAllLiveEdges pass that
+	// rewrote edges to the new version's id is gone.
+	return nil
 }
 
 // pickActivityOccurredAt returns the best signal we have for the synthesised

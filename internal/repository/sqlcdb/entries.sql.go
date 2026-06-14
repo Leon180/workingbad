@@ -99,19 +99,20 @@ func (q *Queries) GetEntryLogicalIDByID(ctx context.Context, id string) (string,
 	return logical_id, err
 }
 
-const getEntryTypeAndCurrent = `-- name: GetEntryTypeAndCurrent :one
-SELECT type, is_current FROM entries WHERE id = ?
+const getEntryNodeRef = `-- name: GetEntryNodeRef :one
+SELECT logical_id, type, is_current FROM entries WHERE id = ?
 `
 
-type GetEntryTypeAndCurrentRow struct {
+type GetEntryNodeRefRow struct {
+	LogicalID string
 	Type      string
 	IsCurrent int64
 }
 
-func (q *Queries) GetEntryTypeAndCurrent(ctx context.Context, id string) (GetEntryTypeAndCurrentRow, error) {
-	row := q.db.QueryRowContext(ctx, getEntryTypeAndCurrent, id)
-	var i GetEntryTypeAndCurrentRow
-	err := row.Scan(&i.Type, &i.IsCurrent)
+func (q *Queries) GetEntryNodeRef(ctx context.Context, id string) (GetEntryNodeRefRow, error) {
+	row := q.db.QueryRowContext(ctx, getEntryNodeRef, id)
+	var i GetEntryNodeRefRow
+	err := row.Scan(&i.LogicalID, &i.Type, &i.IsCurrent)
 	return i, err
 }
 

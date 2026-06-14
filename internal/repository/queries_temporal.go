@@ -131,14 +131,10 @@ func (s *Service) GoalActivitiesAt(ctx context.Context, goalID string, asOf time
 	// Both the activity and the part_of edge must have been live at asOf.
 	// The edge's "successor came after asOf" condition uses its own ingest
 	// timestamp; the activity uses its supersede chain (just like
-	// ListEntriesAt).
-	q := `WITH goal_chain AS (
-              SELECT id FROM entries
-               WHERE logical_id = (
-                   SELECT seed.logical_id FROM entries seed WHERE seed.id = ?
-               )
-          )
-          SELECT e.id, e.logical_id, e.type, e.title, e.body, e.source,
+	// ListEntriesAt). Edges key on logical_id (decision (a), migration 0017),
+	// so the activity joins by its logical_id and the goal is matched directly
+	// by its logical_id — no goal-version chain needed.
+	q := `SELECT e.id, e.logical_id, e.type, e.title, e.body, e.source,
                  COALESCE(e.source_ref, ''), COALESCE(e.source_event_hash, ''),
                  e.origin, COALESCE(e.repo_id, ''), COALESCE(e.author, ''),
                  COALESCE(e.actor, ''), COALESCE(e.reason, ''),
@@ -149,8 +145,8 @@ func (s *Service) GoalActivitiesAt(ctx context.Context, goalID string, asOf time
                  COALESCE(e.ingested_at, e.created_at),
                  e.updated_at
             FROM entries e
-            JOIN edges  ed ON ed.from_id = e.id AND ed.relation = 'part_of'
-           WHERE ed.to_id IN (SELECT id FROM goal_chain)
+            JOIN edges  ed ON ed.from_id = e.logical_id AND ed.relation = 'part_of'
+           WHERE ed.to_id = (SELECT seed.logical_id FROM entries seed WHERE seed.id = ?)
              AND COALESCE(ed.ingested_at, ed.created_at) <= ?
              AND (ed.superseded_by IS NULL OR EXISTS (
                  SELECT 1 FROM edges se
@@ -183,10 +179,10 @@ type EdgeFilter struct {
 	ToID     string
 }
 
-// EdgesAt returns the edges that were live at the given asOf instant. Edge
-// re-points under supersede preserve the original occurred_at (see
-// edges.go) so historical lookups reflect the link that actually existed
-// at T, not the re-stamped clone.
+// EdgesAt returns the edges that were live at the given asOf instant. Edges
+// key on the node's logical_id (decision (a)), so a link's identity is stable
+// across entry supersede and EdgesAt(T) reflects the relationship that actually
+// existed at T. from_id/to_id filters take node ids (logical_id).
 func (s *Service) EdgesAt(ctx context.Context, asOf time.Time, filter EdgeFilter) ([]domain.Edge, error) {
 	if asOf.IsZero() {
 		return nil, fmt.Errorf("repository: EdgesAt requires non-zero asOf")
