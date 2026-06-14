@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/Leon180/workingbad/compare/v0.5.0...v0.6.0) (2026-06-14)
+
+
+### Features
+
+* **web:** node read surface — GET /nodes (Slice D2f-1) ([#91](https://github.com/Leon180/workingbad/issues/91)) ([e9ecb7d](https://github.com/Leon180/workingbad/commit/e9ecb7d6136f1e1ce34bf374218118fea18bc092))
+
 ## [0.5.0](https://github.com/Leon180/workingbad/compare/v0.4.0...v0.5.0) (2026-06-14)
 
 
