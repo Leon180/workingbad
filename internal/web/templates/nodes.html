@@ -1,7 +1,7 @@
 {{template "base" .}}
 {{define "content"}}
 <h1>nodes</h1>
-<p class="meta">graph-level work units (curated from entries; raw records live under <a href="/entries">entries</a>)</p>
+<p class="meta">graph-level work units (curated from entries; raw records live under <a href="/entries">entries</a>) · <a href="/nodes/new">+ new node</a></p>
 
 {{if .AtParseErr}}
 <div class="banner error">at parse error: {{.AtParseErr}} — showing live nodes</div>
