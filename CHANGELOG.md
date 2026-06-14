@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.2](https://github.com/Leon180/workingbad/compare/v0.8.1...v0.8.2) (2026-06-14)
+
+
+### Bug Fixes
+
+* observability + seed hardening (review — safe batch) ([#100](https://github.com/Leon180/workingbad/issues/100)) ([a704b00](https://github.com/Leon180/workingbad/commit/a704b00f93a80a572b1cbf7e03a7320d8353b4ea))
+
 ## [0.8.1](https://github.com/Leon180/workingbad/compare/v0.8.0...v0.8.1) (2026-06-14)
 
 
