@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/Leon180/workingbad/compare/v0.7.0...v0.8.0) (2026-06-14)
+
+
+### Features
+
+* **cli:** node list / node show (Slice D2f-3) ([#95](https://github.com/Leon180/workingbad/issues/95)) ([a752332](https://github.com/Leon180/workingbad/commit/a7523322d6e91724032621fa16ddb11279fd3f65))
+
 ## [0.7.0](https://github.com/Leon180/workingbad/compare/v0.6.0...v0.7.0) (2026-06-14)
 
 
