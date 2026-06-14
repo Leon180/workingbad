@@ -60,6 +60,19 @@ func validateNode(n domain.Node) error {
 // split/aggregate pipeline (Slices G/H) writes through. Assigns id/logical_id
 // when empty and stamps the four timestamps when zero.
 func (s *Service) CreateNode(ctx context.Context, n domain.Node) (domain.Node, error) {
+	var out domain.Node
+	err := s.InTx(ctx, func(ctx context.Context, t *Tx) error {
+		var e error
+		out, e = t.CreateNode(ctx, n)
+		return e
+	})
+	return out, err
+}
+
+// createNodeTx is the transaction-scoped core behind Service.CreateNode and
+// Tx.CreateNode. It MUST run inside a tx: the node row and its FTS mirror have
+// to commit atomically (entries_fts contract), so it is never called with s.db.
+func createNodeTx(ctx context.Context, tx dbtx, n domain.Node) (domain.Node, error) {
 	if err := validateNode(n); err != nil {
 		return domain.Node{}, err
 	}
@@ -92,13 +105,6 @@ func (s *Service) CreateNode(ctx context.Context, n domain.Node) (domain.Node, e
 		n.UpdatedAt = now
 	}
 
-	// Node row + its FTS mirror commit atomically (entries_fts contract).
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return domain.Node{}, fmt.Errorf("repository: begin tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO nodes
 		   (id, logical_id, type, title, body, status, version, is_current,
@@ -111,9 +117,6 @@ func (s *Service) CreateNode(ctx context.Context, n domain.Node) (domain.Node, e
 	}
 	if err := insertNodeFTS(ctx, tx, n); err != nil {
 		return domain.Node{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return domain.Node{}, fmt.Errorf("repository: commit: %w", err)
 	}
 	return n, nil
 }
@@ -366,16 +369,25 @@ func ftsMatchQuery(raw string) string {
 // ErrNotFound rather than silently skipping (INSERT OR IGNORE would swallow
 // an FK violation, so we validate existence first).
 func (s *Service) MapEntryToNode(ctx context.Context, entryID, nodeID string) error {
+	return s.InTx(ctx, func(ctx context.Context, t *Tx) error {
+		return t.MapEntryToNode(ctx, entryID, nodeID)
+	})
+}
+
+// mapEntryToNodeTx is the transaction-scoped core behind Service.MapEntryToNode
+// and Tx.MapEntryToNode. Running the existence checks + insert in one tx also
+// closes the TOCTOU window between check and insert.
+func mapEntryToNodeTx(ctx context.Context, tx dbtx, entryID, nodeID string) error {
 	if entryID == "" || nodeID == "" {
 		return fmt.Errorf("%w: entry id and node id required", ErrInvalidInput)
 	}
-	if err := s.assertExists(ctx, "entries", entryID); err != nil {
+	if err := assertExistsTx(ctx, tx, "entries", entryID); err != nil {
 		return fmt.Errorf("entry: %w", err)
 	}
-	if err := s.assertExists(ctx, "nodes", nodeID); err != nil {
+	if err := assertExistsTx(ctx, tx, "nodes", nodeID); err != nil {
 		return fmt.Errorf("node: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
 		`INSERT OR IGNORE INTO entry_node_map (entry_id, node_id) VALUES (?, ?)`,
 		entryID, nodeID); err != nil {
 		return fmt.Errorf("repository: map entry→node: %w", err)
@@ -470,12 +482,13 @@ func (s *Service) CountNodes(ctx context.Context) (int, error) {
 	return n, nil
 }
 
-// assertExists returns ErrNotFound when no row with the given id exists in
+// assertExistsTx returns ErrNotFound when no row with the given id exists in
 // table. table is a trusted internal constant (never user input), so the
-// interpolation is safe.
-func (s *Service) assertExists(ctx context.Context, table, id string) error {
+// interpolation is safe. Runs on the supplied tx so the check shares the
+// caller's transaction.
+func assertExistsTx(ctx context.Context, tx dbtx, table, id string) error {
 	var one int
-	err := s.db.QueryRowContext(ctx,
+	err := tx.QueryRowContext(ctx,
 		`SELECT 1 FROM `+table+` WHERE id = ? LIMIT 1`, id).Scan(&one)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("%w: %s %s", ErrNotFound, table, id)
