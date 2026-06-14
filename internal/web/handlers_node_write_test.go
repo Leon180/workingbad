@@ -77,6 +77,22 @@ func TestNodeCreate_RejectsBadType(t *testing.T) {
 	}
 }
 
+func TestNodeCreate_RejectsInvalidStatus(t *testing.T) {
+	srv := newTestServer(t)
+	rec := postForm(t, srv, "/nodes", url.Values{
+		"type": {"goal"}, "title": {"g"}, "status": {"bogus"},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("invalid status should re-render form (200), got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "invalid status") {
+		t.Error("missing 'invalid status' message")
+	}
+	if n, _ := srv.svc.CountNodes(context.Background()); n != 0 {
+		t.Errorf("no node should be created on invalid status, got %d", n)
+	}
+}
+
 func TestNodeEdit_SupersedesAndRedirects(t *testing.T) {
 	srv := newTestServer(t)
 	ctx := context.Background()
@@ -145,6 +161,40 @@ func TestNodeEdit_EditsLiveFromStaleURL(t *testing.T) {
 	}
 	if !strings.Contains(form, `name="expected_version" value="2"`) {
 		t.Error("edit form should carry the live version number")
+	}
+}
+
+// The form posts to a specific version's id. If a concurrent writer superseded
+// that version between form-open and submit, the POST must still surface a
+// CONFLICT (re-render with the live version), not a 404 — and must not write.
+// Regression for the go-reviewer blocker on #93.
+func TestNodeEdit_StaleVersionIDYieldsConflictNot404(t *testing.T) {
+	srv := newTestServer(t)
+	ctx := context.Background()
+	v1 := seedNode(t, srv, ctx, domain.EntryTypeResearch, "v1")
+	v2, err := srv.svc.SupersedeNode(ctx, v1.ID, v1.Version, domain.Node{
+		Type: domain.EntryTypeResearch, Title: "v2 (other writer)",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// First user submits the stale form: posts to v1's id, expected_version=1.
+	rec := postForm(t, srv, "/nodes/"+v1.ID, url.Values{
+		"type": {"research"}, "title": {"my edit"}, "expected_version": {"1"},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stale version id must re-render conflict (200), got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "changed since") {
+		t.Error("conflict banner missing")
+	}
+	if !strings.Contains(rec.Body.String(), "v2 (other writer)") {
+		t.Error("conflict re-render should show the live (v2) version")
+	}
+	live, _ := srv.svc.GetLiveNodeByLogicalID(ctx, v1.LogicalID)
+	if live.ID != v2.ID || live.Version != 2 {
+		t.Errorf("conflict must not write: live = (%s v%d), want v2", live.ID, live.Version)
 	}
 }
 
