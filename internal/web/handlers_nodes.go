@@ -55,17 +55,22 @@ func (s *Server) handleNodeIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.renderPage(w, r, "nodes.html", nodeListData{
+	data := nodeListData{
 		Title:       "workingbad — nodes",
 		Nodes:       nodes,
 		Types:       allEntryTypes,
 		ActiveType:  filter.Type,
 		ActiveLimit: filter.Limit,
-		ActiveAt:    atStr,
-		AsOf:        asOf,
-		AtParseErr:  asOfErrString(atStr, asOfErr),
 		Query:       query,
-	})
+	}
+	// Search is its own mode and ignores `at`; don't echo a stale time-travel
+	// banner/state alongside search results.
+	if query == "" {
+		data.ActiveAt = atStr
+		data.AsOf = asOf
+		data.AtParseErr = asOfErrString(atStr, asOfErr)
+	}
+	s.renderPage(w, r, "nodes.html", data)
 }
 
 func (s *Server) handleNodeDetail(w http.ResponseWriter, r *http.Request) {

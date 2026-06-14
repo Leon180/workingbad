@@ -432,7 +432,7 @@ func (s *Service) ListNodes(ctx context.Context, filter NodeListFilter) ([]domai
 		filter.Limit = DefaultListLimit
 	}
 	where := []string{"n.is_current = 1"}
-	args := []any{}
+	var args []any
 	if filter.Type != "" {
 		where = append(where, "n.type = ?")
 		args = append(args, string(filter.Type))
