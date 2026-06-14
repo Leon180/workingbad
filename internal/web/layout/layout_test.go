@@ -139,6 +139,32 @@ func TestBuild_CrossLaneEdgeRenders(t *testing.T) {
 	}
 }
 
+// Regression: after a supersede the rendered entry's ID != LogicalID, but
+// edges key on LogicalID (decision (a), migration 0017). The graph must still
+// resolve the edge. Before the entryKey fix, posByID was keyed on the
+// per-version ID, so every edge touching a superseded entry silently dropped —
+// invisible because seed data never supersedes.
+func TestBuild_EdgeSurvivesSupersede(t *testing.T) {
+	g1 := domain.Entry{ID: "G1", LogicalID: "G1", Type: domain.EntryTypeGoal, Title: "G1"}
+	g2 := domain.Entry{ID: "G2", LogicalID: "G2", Type: domain.EntryTypeGoal, Title: "G2"}
+	// a and b are v2 of their chains: per-version ID differs from the stable
+	// LogicalID that edges reference.
+	a := domain.Entry{ID: "A-v2", LogicalID: "A", Type: domain.EntryTypeActivity, Title: "A"}
+	b := domain.Entry{ID: "B-v2", LogicalID: "B", Type: domain.EntryTypeActivity, Title: "B"}
+
+	c := Build(
+		[]domain.Entry{g1, g2, a, b},
+		[]domain.Edge{
+			{FromID: "A", ToID: "G1", Relation: domain.RelationPartOf, IsCurrent: true},
+			{FromID: "B", ToID: "G2", Relation: domain.RelationPartOf, IsCurrent: true},
+			{FromID: "A", ToID: "B", Relation: domain.RelationRelatesTo, IsCurrent: true},
+		},
+	)
+	if len(c.Edges) != 1 || c.Edges[0].Style != "relates_to" {
+		t.Errorf("cross-lane edge dropped after supersede (ID != LogicalID): got %d edges %+v", len(c.Edges), c.Edges)
+	}
+}
+
 func TestBuild_EmptyInputReturnsEmptyCanvas(t *testing.T) {
 	c := Build(nil, nil)
 	if len(c.Lanes) != 0 || len(c.Nodes) != 0 || len(c.Edges) != 0 {

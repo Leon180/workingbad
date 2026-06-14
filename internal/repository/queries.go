@@ -59,7 +59,11 @@ func (s *Service) ListEntries(ctx context.Context, filter ListFilter) ([]domain.
                  COALESCE(ingested_at, created_at),
                  updated_at
             FROM entries WHERE ` + strings.Join(where, " AND ") +
-		` ORDER BY occurred_at DESC, ingested_at DESC LIMIT ?`
+		// COALESCE in ORDER BY to match the SELECT's rendered value — raw
+		// occurred_at is nullable, so ordering on it mis-sorts vs the COALESCE
+		// the row carries and can't be served by the partial index.
+		` ORDER BY COALESCE(occurred_at, ingested_at, created_at) DESC,
+		           COALESCE(ingested_at, created_at) DESC LIMIT ?`
 	args = append(args, filter.Limit)
 
 	rows, err := s.db.QueryContext(ctx, q, args...)
