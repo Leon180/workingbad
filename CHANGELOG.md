@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.0](https://github.com/Leon180/workingbad/compare/v0.4.0...v0.5.0) (2026-06-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* **repo:** re-key edges to node-id + delete re-point (Slice D2 step 4) ([#89](https://github.com/Leon180/workingbad/issues/89))
+
+### Features
+
+* **repo:** re-key edges to node-id + delete re-point (Slice D2 step 4) ([#89](https://github.com/Leon180/workingbad/issues/89)) ([48ef4eb](https://github.com/Leon180/workingbad/commit/48ef4eb522c2e244e581c0b7f069287a096da3a2))
+
 ## [0.4.0](https://github.com/Leon180/workingbad/compare/v0.3.0...v0.4.0) (2026-06-13)
 
 
