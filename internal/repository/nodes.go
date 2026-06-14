@@ -424,6 +424,43 @@ SELECT ` + labelEntryColumns + `
 	return scanEntryRows(rows)
 }
 
+// ListNodes returns the live (is_current=1) nodes matching the filter, most
+// recent occurred_at first — the non-temporal sibling of ListNodesAt and the
+// node analogue of ListEntries. Backs the GET /nodes read surface.
+func (s *Service) ListNodes(ctx context.Context, filter NodeListFilter) ([]domain.Node, error) {
+	if filter.Limit <= 0 {
+		filter.Limit = DefaultListLimit
+	}
+	where := []string{"n.is_current = 1"}
+	args := []any{}
+	if filter.Type != "" {
+		where = append(where, "n.type = ?")
+		args = append(args, string(filter.Type))
+	}
+	if !filter.IncludeArchived {
+		// COALESCE folds NULL → '' so non-goal nodes (status NULL/'') are kept;
+		// only an explicit 'archived' status is excluded.
+		where = append(where, "COALESCE(n.status, '') != 'archived'")
+	}
+	args = append(args, filter.Limit)
+
+	// Same total order as ListNodesAt (occurred desc, then ingested, then id)
+	// so live and time-travel listings render consistently.
+	q := `SELECT ` + nodeColumns + `
+            FROM nodes n
+           WHERE ` + strings.Join(where, " AND ") +
+		` ORDER BY COALESCE(n.occurred_at, n.ingested_at, n.created_at) DESC,
+                   COALESCE(n.ingested_at, n.created_at) DESC, n.id ASC
+           LIMIT ?`
+
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("repository: ListNodes: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanNodeRows(rows)
+}
+
 // CountNodes returns the total node count — diagnostics + backfill assertions.
 func (s *Service) CountNodes(ctx context.Context) (int, error) {
 	var n int

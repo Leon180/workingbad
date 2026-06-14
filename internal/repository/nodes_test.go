@@ -379,6 +379,55 @@ func TestGetLiveNodeByLogicalID_NotFound(t *testing.T) {
 	}
 }
 
+// --- D2f: ListNodes (live list backing GET /nodes) ---
+
+func TestListNodes_LiveTypeFilterArchived(t *testing.T) {
+	s := newService(t)
+	c := ctx(t)
+	act, err := s.CreateNode(c, domain.Node{Type: domain.EntryTypeActivity, Title: "act"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateNode(c, domain.Node{Type: domain.EntryTypeResearch, Title: "res"}); err != nil {
+		t.Fatal(err)
+	}
+	g, err := s.CreateNode(c, domain.Node{Type: domain.EntryTypeGoal, Title: "goal", Status: domain.StatusOpen})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Supersede the goal to archived: the live version is now archived.
+	if _, err := s.SupersedeNode(c, g.ID, g.Version, domain.Node{
+		Type: domain.EntryTypeGoal, Title: "goal", Status: domain.StatusArchived,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Default: only live, non-archived → act + res.
+	all, err := s.ListNodes(c, NodeListFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 {
+		t.Errorf("ListNodes default = %d, want 2 (archived goal excluded)", len(all))
+	}
+	// Opt in: archived goal included → 3.
+	withArchived, err := s.ListNodes(c, NodeListFilter{IncludeArchived: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(withArchived) != 3 {
+		t.Errorf("ListNodes IncludeArchived = %d, want 3", len(withArchived))
+	}
+	// Type filter.
+	onlyAct, err := s.ListNodes(c, NodeListFilter{Type: domain.EntryTypeActivity})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(onlyAct) != 1 || onlyAct[0].ID != act.ID {
+		t.Errorf("ListNodes type=activity = %v, want [act %s]", ids(onlyAct), act.ID)
+	}
+}
+
 // --- D2 step 2: FTS5 search over the live node layer ---
 
 func TestSearchNodes_FindsCreatedNode(t *testing.T) {
