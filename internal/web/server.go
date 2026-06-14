@@ -102,6 +102,8 @@ func NewServer(svc *repository.Service, cfg config.Web) (*Server, error) {
 	})
 	s.mux.HandleFunc("GET /entries/{id}", s.handleEntryDetail)
 	s.mux.HandleFunc("GET /goals/{id}", s.handleGoalDetail)
+	s.mux.HandleFunc("GET /nodes", s.handleNodeIndex)
+	s.mux.HandleFunc("GET /nodes/{id}", s.handleNodeDetail)
 	s.mux.HandleFunc("GET /new/{type}", s.handleNewForm)
 	s.mux.HandleFunc("POST /new/{type}", s.handleNewSubmit)
 	s.mux.HandleFunc("POST /goals/{id}/status", s.handleGoalStatus)

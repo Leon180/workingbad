@@ -1,0 +1,79 @@
+{{template "base" .}}
+{{define "content"}}
+<h1>nodes</h1>
+<p class="meta">graph-level work units (curated from entries; raw records live under <a href="/entries">entries</a>)</p>
+
+{{if .AtParseErr}}
+<div class="banner error">at parse error: {{.AtParseErr}} — showing live nodes</div>
+{{else if not .AsOf.IsZero}}
+<div class="banner timetravel">
+  ⏳ viewing node graph at <strong>{{fmtTime .AsOf}}</strong>
+  <a href="/nodes{{if .ActiveType}}?type={{.ActiveType}}{{end}}" class="reset">back to live</a>
+</div>
+{{end}}
+
+<form method="get" action="/nodes" class="filter-bar">
+  <label>
+    search
+    <input type="text" name="q" value="{{.Query}}" placeholder="full-text…" style="width: 12rem">
+  </label>
+  <label>
+    type
+    <select name="type" onchange="this.form.submit()">
+      <option value="">all</option>
+      {{- $active := .ActiveType }}
+      {{range .Types}}
+        <option value="{{.}}"{{if eq . $active}} selected{{end}}>{{.}}</option>
+      {{end}}
+    </select>
+  </label>
+  <label>
+    limit
+    <input type="number" name="limit" min="1" max="1000" value="{{.ActiveLimit}}" style="width: 5rem">
+  </label>
+  <label>
+    as of (RFC3339 or YYYY-MM-DD)
+    <input type="text" name="at" value="{{.ActiveAt}}" placeholder="now" style="width: 14rem">
+  </label>
+  <button type="submit">apply</button>
+  {{if or .ActiveType (ne .ActiveLimit 50) .ActiveAt .Query}}
+    <a href="/nodes" class="reset">reset</a>
+  {{end}}
+</form>
+
+{{if .Query}}<p class="meta">search results for <strong>{{.Query}}</strong> (best match first)</p>{{end}}
+
+{{if .Nodes}}
+<table>
+  <thead>
+    <tr>
+      <th>type</th>
+      <th>status</th>
+      <th>title</th>
+      <th>occurred</th>
+      <th>ingested</th>
+      <th>v</th>
+      <th>id</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Nodes}}
+    <tr>
+      <td>{{.Type}}</td>
+      <td>{{if .Status}}{{.Status}}{{else}}-{{end}}</td>
+      <td><a href="/nodes/{{.ID}}">{{.Title}}</a></td>
+      <td class="time">{{fmtTime .OccurredAt}}</td>
+      <td class="time">{{fmtTime .IngestedAt}}</td>
+      <td>v{{.Version}}</td>
+      <td class="id">{{.ID}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+<p class="meta">{{len .Nodes}} node{{if ne (len .Nodes) 1}}s{{end}}</p>
+{{else}}
+<p class="empty">No nodes match.
+  {{if .Query}}<a href="/nodes">clear search</a>.{{else}}The node layer is seeded from existing entries at migration time and curated from there.{{end}}
+</p>
+{{end}}
+{{end}}
