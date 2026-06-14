@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/Leon180/workingbad/compare/v0.6.0...v0.7.0) (2026-06-14)
+
+
+### Features
+
+* **web:** manual node operations — create + edit/supersede (Slice D2f-2) ([#93](https://github.com/Leon180/workingbad/issues/93)) ([a78931f](https://github.com/Leon180/workingbad/commit/a78931f2c9c8e79d9993d02ec9245682dfb348de))
+
 ## [0.6.0](https://github.com/Leon180/workingbad/compare/v0.5.0...v0.6.0) (2026-06-14)
 
 
