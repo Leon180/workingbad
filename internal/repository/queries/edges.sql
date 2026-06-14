@@ -14,17 +14,6 @@ VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?);
 -- name: DetachEdge :execrows
 UPDATE edges SET is_current = 0 WHERE id = ? AND is_current = 1;
 
--- name: GetIncomingLiveEdges :many
-SELECT id, from_id, relation, metadata, occurred_at FROM edges
- WHERE to_id = ? AND is_current = 1;
-
--- name: GetOutgoingLiveEdges :many
-SELECT id, to_id, relation, metadata, occurred_at FROM edges
- WHERE from_id = ? AND is_current = 1;
-
--- name: SupersedeEdge :exec
-UPDATE edges SET is_current = 0, superseded_by = ? WHERE id = ?;
-
 -- name: GetGoalActivitiesByLogicalID :many
 -- Edges key on the node stable id (logical_id == node.id) since migration 0017,
 -- so the activity joins by its logical_id and the goal is matched directly by

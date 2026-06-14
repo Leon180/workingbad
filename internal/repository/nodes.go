@@ -155,6 +155,10 @@ func deleteNodeFTS(ctx context.Context, tx nodeFTSExecer, nodeID string) error {
 // expectedVersion is the optimistic lock: pass the Version observed when the
 // caller read the live node; a mismatch returns ErrVersionConflict (a
 // concurrent edit won). Pass 0 to skip the check (single-writer paths).
+//
+// Edges are NOT touched here: they key on entries.logical_id (decision (a),
+// migration 0017), not on node.id, so a node supersede never dangles an edge.
+// When Slices G/H wire the node layer into edge reads, revisit this.
 func (s *Service) SupersedeNode(ctx context.Context, oldID string, expectedVersion int, replacement domain.Node) (domain.Node, error) {
 	if oldID == "" {
 		return domain.Node{}, fmt.Errorf("%w: node id required", ErrInvalidInput)

@@ -9,8 +9,8 @@ VALUES
 -- name: GetEntryByID :one
 SELECT * FROM entries WHERE id = ?;
 
--- name: GetEntryTypeAndCurrent :one
-SELECT type, is_current FROM entries WHERE id = ?;
+-- name: GetEntryNodeRef :one
+SELECT logical_id, type, is_current FROM entries WHERE id = ?;
 
 -- name: GetLiveActivityForSegment :one
 SELECT id FROM entries

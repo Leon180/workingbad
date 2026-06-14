@@ -310,14 +310,16 @@ func TestSupersede_BothDirectionEdgesSurvive(t *testing.T) {
 	mEdge, _ := s.AttachToGoal(ctx(t), middle.ID, sink.ID)
 	// Incoming: source → middle (relates_to). source/middle are fresh, so
 	// their ids equal their logical_ids — the edge is already node-keyed.
+	// Bind RFC3339Nano timestamps (the format the app uses). SQLite strftime
+	// emits millisecond precision + 'Z', which mis-compares LEXICALLY against
+	// Go's nanosecond RFC3339Nano in EdgesAt's string-typed TEXT columns ('Z'
+	// sorts after digits). A fixed past instant keeps the edge live at now().
+	const past = "2026-01-01T00:00:00Z"
 	if _, err := s.db.Exec(
 		`INSERT INTO edges (id, from_id, to_id, relation, is_current, metadata,
 		                    created_at, occurred_at, ingested_at)
-		 VALUES ('test-edge-in', ?, ?, 'relates_to', 1, '{}',
-		         strftime('%Y-%m-%dT%H:%M:%fZ','now'),
-		         strftime('%Y-%m-%dT%H:%M:%fZ','now'),
-		         strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
-		source.LogicalID, middle.LogicalID,
+		 VALUES ('test-edge-in', ?, ?, 'relates_to', 1, '{}', ?, ?, ?)`,
+		source.LogicalID, middle.LogicalID, past, past, past,
 	); err != nil {
 		t.Fatal(err)
 	}

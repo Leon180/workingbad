@@ -117,8 +117,9 @@ func (s *Service) DetachFromGoal(ctx context.Context, edgeID string) error {
 	return nil
 }
 
-// SetGoalStatus changes a goal entry's status by superseding it and
-// re-points every live incoming edge to the new id in the same tx.
+// SetGoalStatus changes a goal entry's status by superseding it in the same tx.
+// Attached activities stay linked with no edge rewriting: edges key on the
+// goal's logical_id (decision (a)), which the supersede preserves.
 func (s *Service) SetGoalStatus(ctx context.Context, goalID string, newStatus domain.Status) (domain.Entry, error) {
 	switch newStatus {
 	case domain.StatusOpen, domain.StatusInProgress, domain.StatusDone, domain.StatusArchived:
@@ -176,7 +177,7 @@ func (s *Service) SetGoalStatus(ctx context.Context, goalID string, newStatus do
 // (== node.id at this stage). Because logical_id is invariant across an entry's
 // supersede chain, edges referencing it never need re-pointing (decision (a)).
 func resolveLiveNodeID(ctx context.Context, qtx *sqlcdb.Queries, id, wantType string) (string, error) {
-	row, err := qtx.GetEntryByID(ctx, id)
+	row, err := qtx.GetEntryNodeRef(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("entry %q not found: %w", id, ErrNotFound)
 	}
@@ -188,6 +189,11 @@ func resolveLiveNodeID(ctx context.Context, qtx *sqlcdb.Queries, id, wantType st
 	}
 	if wantType != "" && row.Type != wantType {
 		return "", fmt.Errorf("entry %q has type %q, want %q", id, row.Type, wantType)
+	}
+	// logical_id is TEXT NOT NULL and backfilled (migration 0009), so this is a
+	// data-integrity guard, not an expected path: never write a blank-keyed edge.
+	if row.LogicalID == "" {
+		return "", fmt.Errorf("repository: entry %q has empty logical_id (data integrity)", id)
 	}
 	return row.LogicalID, nil
 }

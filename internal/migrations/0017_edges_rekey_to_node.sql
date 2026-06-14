@@ -28,8 +28,14 @@ DROP INDEX IF EXISTS idx_edges_live_triple;
 -- +goose StatementEnd
 
 -- 3. Remap from_id: entry-id → that entry's logical_id (= node.id). Only rows
---    whose endpoint resolves to a known entry are touched; anything already
---    keyed otherwise is left untouched (defensive).
+--    whose endpoint resolves to a known entry are touched. Entries are
+--    append-only + supersede (never hard-deleted), so every edge endpoint
+--    written by AttachToGoal resolves to a live entry — there are no orphans in
+--    practice. The WHERE EXISTS guard is purely defensive; were a stale orphan
+--    to exist it would be left as-is AND preserved verbatim in
+--    edges_pre_node_rekey for inspection (inspect with:
+--    SELECT * FROM edges WHERE is_current=1
+--      AND from_id NOT IN (SELECT logical_id FROM entries)).
 -- +goose StatementBegin
 UPDATE edges
    SET from_id = (SELECT e.logical_id FROM entries e WHERE e.id = edges.from_id)
@@ -43,9 +49,11 @@ UPDATE edges
 
 -- 4. Collapsing per-version ids onto logical_ids could make two live rows share
 --    (from_id, to_id, relation). In correctly re-pointed data this can't happen
---    (re-point retires the old before inserting the new), but guard anyway:
---    keep the most-recently-inserted live row per triple, retire the rest, so
---    the unique index rebuilds cleanly.
+--    (re-point retired the old before inserting the new, leaving one live row
+--    per logical relationship), but guard anyway: keep the most-recently-
+--    inserted live row per triple, retire the rest (is_current=0 — NOT deleted,
+--    so the row + its superseded_by audit trail survive and the pre-image is
+--    also in edges_pre_node_rekey), so the unique index rebuilds cleanly.
 -- +goose StatementBegin
 UPDATE edges
    SET is_current = 0

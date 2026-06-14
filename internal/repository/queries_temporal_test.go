@@ -142,3 +142,71 @@ func TestListEntriesAt_RequiresNonZeroAsOf(t *testing.T) {
 		t.Error("expected error on zero asOf")
 	}
 }
+
+// TestGoalActivitiesAt_FollowsLogicalIDAcrossSupersede covers the edges-on-node
+// re-key (decision (a), migration 0017): GoalActivitiesAt joins
+// ed.from_id = e.logical_id, so the link follows the activity's supersede chain
+// — the live version now, the historical version at a past instant — without
+// any edge rewriting.
+func TestGoalActivitiesAt_FollowsLogicalIDAcrossSupersede(t *testing.T) {
+	s := newService(t)
+	c := ctx(t)
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	goal, err := s.InsertEntry(c, domain.Entry{
+		Type: domain.EntryTypeGoal, Origin: domain.OriginLocal,
+		Source: domain.SourceManual, SourceRef: "ga-g", Title: "goal", Status: domain.StatusOpen,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a1, err := s.InsertEntry(c, domain.Entry{
+		Type: domain.EntryTypeActivity, Origin: domain.OriginLocal,
+		Source: domain.SourceManual, SourceRef: "ga-a", Title: "a1", OccurredAt: t0,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	edge, err := s.AttachToGoal(c, a1.ID, goal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a2, err := s.Supersede(c, a1.ID, 0, domain.Entry{
+		Type: domain.EntryTypeActivity, Origin: domain.OriginLocal,
+		Source: domain.SourceManual, SourceRef: "ga-a2", Title: "a2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Precondition: the supersede was ingested strictly after the attach, so the
+	// two asOf windows below are distinct (sequential now() + DB round-trips
+	// guarantee this; assert it rather than race a sleep).
+	if !a2.IngestedAt.After(edge.IngestedAt) {
+		t.Fatalf("clock precondition failed: a2.ingested %v not after edge.ingested %v", a2.IngestedAt, edge.IngestedAt)
+	}
+
+	// Now: the join follows the chain to the live version a2.
+	got, err := s.GoalActivitiesAt(c, goal.ID, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != a2.ID {
+		t.Errorf("GoalActivitiesAt(now): got %d rows (first=%v), want [a2 %s]", len(got), firstID(got), a2.ID)
+	}
+
+	// At the attach instant (before a2 was ingested): the historical version a1.
+	got, err = s.GoalActivitiesAt(c, goal.ID, edge.IngestedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != a1.ID {
+		t.Errorf("GoalActivitiesAt(attach): got %d rows (first=%v), want [a1 %s]", len(got), firstID(got), a1.ID)
+	}
+}
+
+func firstID(es []domain.Entry) string {
+	if len(es) == 0 {
+		return "<none>"
+	}
+	return es[0].ID
+}

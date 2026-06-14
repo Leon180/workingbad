@@ -106,48 +106,6 @@ func (q *Queries) GetGoalActivitiesByLogicalID(ctx context.Context, id string) (
 	return items, nil
 }
 
-const getIncomingLiveEdges = `-- name: GetIncomingLiveEdges :many
-SELECT id, from_id, relation, metadata, occurred_at FROM edges
- WHERE to_id = ? AND is_current = 1
-`
-
-type GetIncomingLiveEdgesRow struct {
-	ID         string
-	FromID     string
-	Relation   string
-	Metadata   string
-	OccurredAt sql.NullString
-}
-
-func (q *Queries) GetIncomingLiveEdges(ctx context.Context, toID string) ([]GetIncomingLiveEdgesRow, error) {
-	rows, err := q.db.QueryContext(ctx, getIncomingLiveEdges, toID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []GetIncomingLiveEdgesRow{}
-	for rows.Next() {
-		var i GetIncomingLiveEdgesRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.FromID,
-			&i.Relation,
-			&i.Metadata,
-			&i.OccurredAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getLiveEdgeByTriple = `-- name: GetLiveEdgeByTriple :one
 SELECT id FROM edges
  WHERE from_id = ? AND to_id = ? AND relation = ? AND is_current = 1
@@ -164,48 +122,6 @@ func (q *Queries) GetLiveEdgeByTriple(ctx context.Context, arg GetLiveEdgeByTrip
 	var id string
 	err := row.Scan(&id)
 	return id, err
-}
-
-const getOutgoingLiveEdges = `-- name: GetOutgoingLiveEdges :many
-SELECT id, to_id, relation, metadata, occurred_at FROM edges
- WHERE from_id = ? AND is_current = 1
-`
-
-type GetOutgoingLiveEdgesRow struct {
-	ID         string
-	ToID       string
-	Relation   string
-	Metadata   string
-	OccurredAt sql.NullString
-}
-
-func (q *Queries) GetOutgoingLiveEdges(ctx context.Context, fromID string) ([]GetOutgoingLiveEdgesRow, error) {
-	rows, err := q.db.QueryContext(ctx, getOutgoingLiveEdges, fromID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []GetOutgoingLiveEdgesRow{}
-	for rows.Next() {
-		var i GetOutgoingLiveEdgesRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.ToID,
-			&i.Relation,
-			&i.Metadata,
-			&i.OccurredAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const insertEdge = `-- name: InsertEdge :exec
@@ -241,19 +157,5 @@ func (q *Queries) InsertEdge(ctx context.Context, arg InsertEdgeParams) error {
 		arg.IngestedAt,
 		arg.CreatedAt,
 	)
-	return err
-}
-
-const supersedeEdge = `-- name: SupersedeEdge :exec
-UPDATE edges SET is_current = 0, superseded_by = ? WHERE id = ?
-`
-
-type SupersedeEdgeParams struct {
-	SupersededBy sql.NullString
-	ID           string
-}
-
-func (q *Queries) SupersedeEdge(ctx context.Context, arg SupersedeEdgeParams) error {
-	_, err := q.db.ExecContext(ctx, supersedeEdge, arg.SupersededBy, arg.ID)
 	return err
 }
