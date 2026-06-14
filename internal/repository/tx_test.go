@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/Leon180/workingbad/internal/domain"
@@ -67,7 +68,9 @@ func TestInTx_RollsBackOnError(t *testing.T) {
 	if _, e := s.GetNode(c, createdID); !errors.Is(e, ErrNotFound) {
 		t.Errorf("node should have rolled back, GetNode = %v", e)
 	}
-	if cnt, _ := s.CountNodes(c); cnt != 0 {
+	if cnt, cerr := s.CountNodes(c); cerr != nil {
+		t.Fatal(cerr)
+	} else if cnt != 0 {
 		t.Errorf("expected 0 nodes after rollback, got %d", cnt)
 	}
 }
@@ -90,7 +93,36 @@ func TestInTx_SplitPartialFailureRollsBackAll(t *testing.T) {
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
-	if cnt, _ := s.CountNodes(c); cnt != 0 {
+	if cnt, cerr := s.CountNodes(c); cerr != nil {
+		t.Fatal(cerr)
+	} else if cnt != 0 {
 		t.Errorf("partial-failure split must roll back all nodes, got %d", cnt)
+	}
+}
+
+// Calling a Service write inside fn re-enters InTx, which must fail fast (the
+// single-connection pool would otherwise deadlock) — not hang.
+func TestInTx_NestedRejected(t *testing.T) {
+	s := newService(t)
+	err := s.InTx(ctx(t), func(c context.Context, _ *Tx) error {
+		_, e := s.CreateNode(c, domain.Node{Type: domain.EntryTypeResearch, Title: "nested"})
+		return e
+	})
+	if err == nil || !strings.Contains(err.Error(), "InTx called within InTx") {
+		t.Fatalf("nested InTx should fail fast, got %v", err)
+	}
+	// Nothing should have been written.
+	if cnt, cerr := s.CountNodes(ctx(t)); cerr != nil || cnt != 0 {
+		t.Errorf("nested-InTx rejection should write nothing, count=%d err=%v", cnt, cerr)
+	}
+}
+
+// BeginTx fails on an already-cancelled context; InTx surfaces it.
+func TestInTx_CancelledContext(t *testing.T) {
+	s := newService(t)
+	c, cancel := context.WithCancel(ctx(t))
+	cancel()
+	if err := s.InTx(c, func(context.Context, *Tx) error { return nil }); err == nil {
+		t.Error("expected an error from BeginTx on a cancelled context")
 	}
 }
