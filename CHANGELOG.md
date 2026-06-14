@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/Leon180/workingbad/compare/v0.8.0...v0.8.1) (2026-06-14)
+
+
+### Bug Fixes
+
+* **web,repo:** graph edges survive supersede + ListEntries COALESCE order (review) ([#98](https://github.com/Leon180/workingbad/issues/98)) ([ed2a51d](https://github.com/Leon180/workingbad/commit/ed2a51dc03c0b6861124e87c920814de92b61286))
+
 ## [0.8.0](https://github.com/Leon180/workingbad/compare/v0.7.0...v0.8.0) (2026-06-14)
 
 
