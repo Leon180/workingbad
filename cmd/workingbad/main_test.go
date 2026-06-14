@@ -499,3 +499,64 @@ func mustExtractCreatedID(t *testing.T, stdout, wantType string) string {
 	t.Fatalf("could not find created %s id in: %q", wantType, stdout)
 	return ""
 }
+
+// TestCLI_NodeListAndShow drives the node CLI surface. Nodes have no CLI
+// create command (manual ops are web-only; CLI is read-only parity), so we
+// seed them directly through the service against the same temp DB.
+func TestCLI_NodeListAndShow(t *testing.T) {
+	cfgPath, dbPath := setupRun(t)
+	ctx := context.Background()
+
+	db, err := repository.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	svc := repository.NewService(db)
+	v1, err := svc.CreateNode(ctx, domain.Node{Type: domain.EntryTypeResearch, Title: "investigate vectors"})
+	if err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
+	v2, err := svc.SupersedeNode(ctx, v1.ID, v1.Version, domain.Node{
+		Type: domain.EntryTypeResearch, Title: "investigate vectors v2",
+	})
+	if err != nil {
+		t.Fatalf("SupersedeNode: %v", err)
+	}
+	_ = db.Close() // release the handle before the CLI opens its own
+
+	// node list → live version only.
+	out := captureStdout(t, func() error { return runCLI(cfgPath, "node", "list") })
+	if !strings.Contains(out, "investigate vectors v2") {
+		t.Errorf("node list missing live node: %q", out)
+	}
+
+	// node show → full chain, current marked.
+	out = captureStdout(t, func() error { return runCLI(cfgPath, "node", "show", v2.ID) })
+	for _, want := range []string{"v2", "v1", "investigate vectors v2", "(current)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("node show missing %q: %q", want, out)
+		}
+	}
+
+	// node list --q → FTS search.
+	out = captureStdout(t, func() error { return runCLI(cfgPath, "node", "list", "--q", "vectors") })
+	if !strings.Contains(out, "investigate vectors v2") {
+		t.Errorf("node list --q missing match: %q", out)
+	}
+
+	// node show <unknown> → friendly message, no error.
+	out = captureStdout(t, func() error {
+		return runCLI(cfgPath, "node", "show", "0192f6c0-7e31-7c2b-9b8a-ffffffffffff")
+	})
+	if !strings.Contains(out, "no such node") {
+		t.Errorf("node show unknown: %q", out)
+	}
+}
+
+func TestCLI_NodeListEmpty(t *testing.T) {
+	cfgPath, _ := setupRun(t)
+	out := captureStdout(t, func() error { return runCLI(cfgPath, "node", "list") })
+	if !strings.Contains(out, "no nodes") {
+		t.Errorf("expected 'no nodes', got %q", out)
+	}
+}
