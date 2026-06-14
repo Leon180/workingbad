@@ -17,7 +17,7 @@ const (
 	// binaryVersion is bumped automatically by release-please from
 	// conventional commits — the annotation below is the update anchor.
 	// Do not edit by hand; merge the release PR instead.
-	binaryVersion = "0.7.0" // x-release-please-version
+	binaryVersion = "0.8.0" // x-release-please-version
 )
 
 func main() {
