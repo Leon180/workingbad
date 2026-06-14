@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/Leon180/workingbad/compare/v0.8.2...v0.9.0) (2026-06-14)
+
+
+### Features
+
+* **repo:** InTx transaction seam (Slice F0) ([#104](https://github.com/Leon180/workingbad/issues/104)) ([226f352](https://github.com/Leon180/workingbad/commit/226f3528d6158156f0271479066c760521600288))
+
 ## [0.8.2](https://github.com/Leon180/workingbad/compare/v0.8.1...v0.8.2) (2026-06-14)
 
 
