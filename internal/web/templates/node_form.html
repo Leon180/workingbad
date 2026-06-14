@@ -1,0 +1,33 @@
+{{template "base" .}}
+{{define "content"}}
+<p class="meta"><a href="/nodes">← nodes</a></p>
+<h1>{{.Heading}}</h1>
+
+{{if .FormErr}}<div class="banner {{if .Conflict}}timetravel{{else}}error{{end}}">{{.FormErr}}</div>{{end}}
+
+<form method="post" action="{{.Action}}" class="entry-form">
+  <input type="hidden" name="type" value="{{.Type}}">
+  {{if .IsEdit}}<input type="hidden" name="expected_version" value="{{.Version}}">{{end}}
+  <label>
+    title
+    <input type="text" name="title" value="{{.TitleIn}}" required autofocus>
+  </label>
+  <label>
+    body
+    <textarea name="body" rows="8">{{.Body}}</textarea>
+  </label>
+  {{if eq .Type "goal"}}
+  <label>
+    status
+    <select name="status">
+      {{$s := .Status}}
+      <option value="open"{{if eq $s "open"}} selected{{end}}>open</option>
+      <option value="in_progress"{{if eq $s "in_progress"}} selected{{end}}>in_progress</option>
+      <option value="done"{{if eq $s "done"}} selected{{end}}>done</option>
+      <option value="archived"{{if eq $s "archived"}} selected{{end}}>archived</option>
+    </select>
+  </label>
+  {{end}}
+  <button type="submit">{{if .IsEdit}}save (new version){{else}}create node{{end}}</button>
+</form>
+{{end}}

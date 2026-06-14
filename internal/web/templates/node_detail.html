@@ -1,6 +1,6 @@
 {{template "base" .}}
 {{define "content"}}
-<p class="meta"><a href="/nodes">← nodes</a></p>
+<p class="meta"><a href="/nodes">← nodes</a> · <a href="/nodes/{{.Node.ID}}/edit">edit</a></p>
 <h1>{{.Node.Title}}</h1>
 
 <dl class="detail-kv">
