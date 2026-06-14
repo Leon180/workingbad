@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
@@ -49,7 +50,9 @@ func (s *Server) handleGetLabels(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if err := json.NewEncoder(w).Encode(labels); err != nil {
-		// Log-level only; the response is already partially written.
+		// Headers are already sent, so this can't become a 5xx — but it must be
+		// observable in server logs rather than vanishing.
+		slog.ErrorContext(r.Context(), "encode labels response", "err", err)
 		return
 	}
 }
@@ -107,6 +110,7 @@ func (s *Server) handleSetLabels(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if err := json.NewEncoder(w).Encode(persisted); err != nil {
+		slog.ErrorContext(r.Context(), "encode set-labels response", "err", err)
 		return
 	}
 }

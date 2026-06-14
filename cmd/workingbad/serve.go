@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/pprof"
@@ -102,7 +103,9 @@ func startPprofServer(port int) (string, func(), error) {
 	go func() {
 		fmt.Printf("pprof debug surface at http://%s/debug/pprof/\n", addr)
 		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
-			fmt.Printf("pprof debug surface: %v\n", err)
+			// async goroutine — log as an error so a crashed pprof surface is
+			// observable, not just a one-line stdout print that scrolls away.
+			slog.Error("pprof debug surface stopped", "err", err)
 		}
 	}()
 
