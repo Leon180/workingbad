@@ -560,3 +560,39 @@ func TestCLI_NodeListEmpty(t *testing.T) {
 		t.Errorf("expected 'no nodes', got %q", out)
 	}
 }
+
+// TestCLI_NodeListTimeTravel exercises the --at bitemporal branch: a node
+// stamped in the past then superseded must show its historical version at a
+// past --at and the live version without --at.
+func TestCLI_NodeListTimeTravel(t *testing.T) {
+	cfgPath, dbPath := setupRun(t)
+	ctx := context.Background()
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	db, err := repository.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	svc := repository.NewService(db)
+	v1, err := svc.CreateNode(ctx, domain.Node{
+		Type: domain.EntryTypeDecision, Title: "decision-alpha", OccurredAt: t0, IngestedAt: t0,
+	})
+	if err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
+	if _, err := svc.SupersedeNode(ctx, v1.ID, v1.Version, domain.Node{
+		Type: domain.EntryTypeDecision, Title: "decision-omega",
+	}); err != nil {
+		t.Fatalf("SupersedeNode: %v", err)
+	}
+	_ = db.Close()
+
+	out := captureStdout(t, func() error { return runCLI(cfgPath, "node", "list") })
+	if !strings.Contains(out, "decision-omega") || strings.Contains(out, "decision-alpha") {
+		t.Errorf("live node list should show omega not alpha: %q", out)
+	}
+	out = captureStdout(t, func() error { return runCLI(cfgPath, "node", "list", "--at", "2026-01-02") })
+	if !strings.Contains(out, "decision-alpha") || strings.Contains(out, "decision-omega") {
+		t.Errorf("node list --at should show alpha not omega: %q", out)
+	}
+}

@@ -141,7 +141,7 @@ func allCommands() []*cli.Command {
 					Usage: "list live nodes (--at for a past snapshot, --q for full-text search)",
 					Description: "Without flags: every is_current=1 node, newest first. --at gives the\n" +
 						"bitemporal snapshot; --q runs an FTS5 (bm25) search over live nodes\n" +
-						"(and ignores --type/--at).\n\n" +
+						"(and ignores --type/--at/--include-archived).\n\n" +
 						"EXAMPLES:\n" +
 						"  workingbad node list\n" +
 						"  workingbad node list --type goal\n" +
@@ -151,7 +151,7 @@ func allCommands() []*cli.Command {
 						&cli.StringFlag{Name: "type", Usage: "show only nodes of this type (activity|research|discuss|decision|goal)"},
 						&cli.IntFlag{Name: "limit", Value: 20, Usage: "stop after printing this many rows"},
 						&cli.StringFlag{Name: "at", Usage: "time-travel snapshot at RFC3339 or YYYY-MM-DD (midnight UTC)"},
-						&cli.StringFlag{Name: "q", Usage: "full-text search (bm25) over live nodes; ignores --type/--at"},
+						&cli.StringFlag{Name: "q", Usage: "full-text search (bm25) over live nodes; ignores --type/--at/--include-archived"},
 						&cli.BoolFlag{Name: "include-archived", Usage: "include nodes whose status is 'archived'"},
 					},
 					Action: actionNodeList,
