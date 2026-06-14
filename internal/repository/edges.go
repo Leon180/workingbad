@@ -52,7 +52,7 @@ func (s *Service) AttachToGoal(ctx context.Context, activityID, goalID string) (
 			return domain.Edge{}, lerr
 		}
 		if cerr := tx.Commit(); cerr != nil {
-			return domain.Edge{}, cerr
+			return domain.Edge{}, fmt.Errorf("repository: commit: %w", cerr)
 		}
 		converted, cerr := edgeFromSqlc(edge)
 		if cerr != nil {

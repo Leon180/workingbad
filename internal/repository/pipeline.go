@@ -448,7 +448,10 @@ func (s *Service) materializeOne(ctx context.Context, seg domain.Segment, provid
 		return fmt.Errorf("repository: mark materialized: %w", err)
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("repository: commit: %w", err)
+	}
+	return nil
 }
 
 // insertEntryInTx writes a fresh Entry + its FTS mirror inside an existing tx.

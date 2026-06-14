@@ -2,6 +2,7 @@ package web
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -86,6 +87,11 @@ func (s *Server) handleMaterialize(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, fmt.Sprintf("materialize: %v", err), http.StatusInternalServerError)
 		return
+	}
+	// Partial failures only surface as "failed=N" in the flash; log the actual
+	// per-segment reasons so an operator can find out what went wrong.
+	for _, e := range res.Errors {
+		slog.WarnContext(r.Context(), "materialize segment failed", "err", e)
 	}
 
 	target := safeRedirectPath(r, r.Header.Get("Referer"), "/")

@@ -248,7 +248,11 @@ func (s *Server) Serve(ctx context.Context) error {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = s.httpSrv.Shutdown(shutdownCtx)
+		if err := s.httpSrv.Shutdown(shutdownCtx); err != nil {
+			// Drain window expired with requests still in flight — surface it
+			// rather than reporting a clean stop.
+			slog.WarnContext(ctx, "http shutdown incomplete", "err", err)
+		}
 		return nil
 	case err := <-errCh:
 		// errors.Is over == here is idiomatic (avoids the sentinel-

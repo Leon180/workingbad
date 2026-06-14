@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/urfave/cli/v3"
 
@@ -43,6 +44,9 @@ func actionSeedGitHub(ctx context.Context, c *cli.Command) error {
 		if err != nil {
 			return fmt.Errorf("discover repo: %w (try --repo owner/name)", err)
 		}
+	}
+	if !ghSlugRe.MatchString(repoSlug) {
+		return fmt.Errorf("invalid repo %q: expected owner/name (letters, digits, . _ -)", repoSlug)
 	}
 
 	token := os.Getenv("GH_TOKEN")
@@ -225,6 +229,15 @@ type ghIssue struct {
 // fetchAllIssues paginates the GitHub Issues API until it gets a short
 // page. state=all includes closed; PRs come through the same endpoint
 // (filtered apart by the PullRequest field at the call site).
+// ghSlugRe constrains repoSlug to owner/name so it cannot inject query
+// parameters or redirect the request to another host (e.g. an "@host" userinfo
+// trick) when interpolated into the GitHub API URL.
+var ghSlugRe = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
+
+// ghHTTPClient bounds GitHub fetches; http.DefaultClient has no timeout, so a
+// hung connection would block the seed command forever.
+var ghHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
 func fetchAllIssues(ctx context.Context, token, repoSlug string) ([]ghIssue, error) {
 	var all []ghIssue
 	const perPage = 100
@@ -241,7 +254,7 @@ func fetchAllIssues(ctx context.Context, token, repoSlug string) ([]ghIssue, err
 		req.Header.Set("Accept", "application/vnd.github+json")
 		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 		req.Header.Set("User-Agent", "workingbad-seed/1")
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := ghHTTPClient.Do(req)
 		if err != nil {
 			return nil, err
 		}
