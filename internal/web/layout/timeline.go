@@ -165,9 +165,12 @@ func buildEdges(edges []domain.Edge, nodes []Node, lanes []Lane, goalToLane map[
 		x, y float64
 		lane int
 	}
+	// Key on entryKey (LogicalID): edges store logical_ids; goalToLane is
+	// already logical-keyed. (Keying on per-version .ID drops edges after any
+	// supersede.)
 	posByID := make(map[string]pos, len(nodes)+len(goalToLane))
 	for i := range nodes {
-		posByID[nodes[i].Entry.ID] = pos{nodes[i].X, nodes[i].Y, nodes[i].LaneIndex}
+		posByID[entryKey(nodes[i].Entry)] = pos{nodes[i].X, nodes[i].Y, nodes[i].LaneIndex}
 	}
 	for goalID, li := range goalToLane {
 		posByID[goalID] = pos{lanes[li].GoalX, lanes[li].Y, li}

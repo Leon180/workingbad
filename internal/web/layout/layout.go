@@ -22,6 +22,19 @@ import (
 	"github.com/Leon180/workingbad/internal/domain"
 )
 
+// entryKey is the identity edges resolve against: an entry's LogicalID (edges
+// store logical_ids — decision (a), migration 0017). Falls back to ID only for
+// the degenerate case of an entry with no LogicalID set; production reads always
+// populate it, so this is the pure-logical path there. Keying graph positions
+// on the per-version ID instead silently drops every edge touching a superseded
+// entry (ID != LogicalID after the first supersede).
+func entryKey(e domain.Entry) string {
+	if e.LogicalID != "" {
+		return e.LogicalID
+	}
+	return e.ID
+}
+
 // Lane is one horizontal track: a goal (or the orphan placeholder) plus
 // every entry attached to it via part_of. Lanes are ordered top-to-bottom
 // and each has a distinct colour from the laneColours palette.
@@ -243,9 +256,11 @@ func Build(entries []domain.Entry, edges []domain.Edge) Canvas {
 	// Step 5: cross-lane edges. Skip same-lane part_of (the lane line
 	// itself says "these belong here"). Everything else becomes a bezier
 	// curve between the two endpoint coordinates.
+	// Key on entryKey (LogicalID) — edges store logical_ids; the rendered set
+	// has one live entry per logical_id.
 	posByID := make(map[string]*Node, len(nodes))
 	for i := range nodes {
-		posByID[nodes[i].Entry.ID] = &nodes[i]
+		posByID[entryKey(nodes[i].Entry)] = &nodes[i]
 	}
 	edgePaths := make([]EdgePath, 0, len(edges))
 	for _, e := range edges {
@@ -323,7 +338,7 @@ func assignLanes(entries []domain.Entry, edges []domain.Edge) laneLayout {
 			Goal:       &goals[i],
 			ColorIndex: i % len(laneColours),
 		})
-		goalToLane[goals[i].ID] = i
+		goalToLane[entryKey(goals[i])] = i
 	}
 	orphanLaneIdx := -1
 
@@ -338,13 +353,15 @@ func assignLanes(entries []domain.Entry, edges []domain.Edge) laneLayout {
 		goalsOfEntry[e.FromID] = append(goalsOfEntry[e.FromID], e.ToID)
 	}
 
+	// entryLane is keyed on entryKey (LogicalID) throughout, because goalsOfEntry
+	// is built from edge endpoints (logical_ids) and goalToLane is logical-keyed.
 	entryLane := make(map[string]int, len(entries))
 	for _, e := range entries {
 		if e.Type == domain.EntryTypeGoal {
-			entryLane[e.ID] = goalToLane[e.ID]
+			entryLane[entryKey(e)] = goalToLane[entryKey(e)]
 			continue
 		}
-		homeGoals := goalsOfEntry[e.ID]
+		homeGoals := goalsOfEntry[entryKey(e)]
 		if len(homeGoals) == 0 {
 			if orphanLaneIdx == -1 {
 				orphanLaneIdx = len(lanes)
@@ -353,11 +370,11 @@ func assignLanes(entries []domain.Entry, edges []domain.Edge) laneLayout {
 					ColorIndex: len(laneColours), // ".lane-orphan" in CSS
 				})
 			}
-			entryLane[e.ID] = orphanLaneIdx
+			entryLane[entryKey(e)] = orphanLaneIdx
 			continue
 		}
 		sort.Strings(homeGoals)
-		entryLane[e.ID] = goalToLane[homeGoals[0]]
+		entryLane[entryKey(e)] = goalToLane[homeGoals[0]]
 	}
 
 	buckets := make([][]domain.Entry, len(lanes))
@@ -365,7 +382,7 @@ func assignLanes(entries []domain.Entry, edges []domain.Edge) laneLayout {
 		if e.Type == domain.EntryTypeGoal {
 			continue // goals render as the lane anchor, not as a bucket entry
 		}
-		buckets[entryLane[e.ID]] = append(buckets[entryLane[e.ID]], e)
+		buckets[entryLane[entryKey(e)]] = append(buckets[entryLane[entryKey(e)]], e)
 	}
 	for li := range buckets {
 		sort.Slice(buckets[li], func(i, j int) bool {
