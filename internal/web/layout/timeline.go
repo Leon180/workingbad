@@ -15,8 +15,8 @@ const (
 	tlLaneHeight = 88.0  // vertical gap between timeline lanes
 	tlTopPad     = 52.0  // headroom above the first lane
 	tlAxisPad    = 44.0  // room below the last lane for the time-tick axis
-	tlTitleW     = 168.0 // pinned left lane-title column width
-	tlGoalW      = 188.0 // pinned right goal-anchor column width
+	tlTitleW     = 150.0 // pinned left lane-title column width
+	tlGoalW      = 212.0 // pinned right goal-anchor column width
 	tlLeftPad    = 28.0  // gap between title column and the first node
 	tlRightPad   = 28.0  // gap between the last node and the goal column
 	tlDotR       = 7.0   // entry dot radius

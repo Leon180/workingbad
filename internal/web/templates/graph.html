@@ -66,8 +66,9 @@ workingbad attach &lt;note-id&gt; &lt;goal-id&gt;</pre>
   {{/* zoom control overlay — time-density, not viewBox scale (JS-revealed) */}}
   <div class="graph-zoom" id="graph-zoom" hidden>
     <button type="button" data-zoom="out" title="zoom out (less density)">−</button>
-    <span id="graph-zoom-pct">100%</span>
+    <span id="graph-zoom-pct" class="zoom-pct">100%</span>
     <button type="button" data-zoom="in" title="zoom in (more density)">+</button>
+    <span class="zoom-sep"></span>
     <button type="button" data-zoom="fit" title="fit whole project to width">⤢</button>
   </div>
 
@@ -75,7 +76,7 @@ workingbad attach &lt;note-id&gt; &lt;goal-id&gt;</pre>
   <div class="tl-titles" style="height: {{.Canvas.Height}}px; width: {{.Canvas.TitleW}}px">
     {{range .Canvas.Lanes}}
     <div class="tl-title {{if .Goal}}lane-label-{{.ColorIndex}}{{else}}lane-label-orphan{{end}}"
-         style="top: {{minusF .Y 10.0}}px">
+         style="top: {{.Y}}px">
       {{if .Goal}}{{truncate .Goal.Title 18}}{{else}}orphan{{end}}
     </div>
     {{end}}
@@ -162,7 +163,7 @@ workingbad attach &lt;note-id&gt; &lt;goal-id&gt;</pre>
     {{$g := .Goal}}
     <a class="tl-goal node-goal lane-{{.ColorIndex}}{{if $g.Status}} status-{{$g.Status}}{{end}}"
        href="/goals/{{$g.ID}}"
-       style="top: {{minusF .Y 28.0}}px"
+       style="top: {{.Y}}px"
        data-id="{{$g.ID}}" data-kind="goal" data-type="goal" data-title="{{$g.Title}}"
        {{if $g.Status}}data-status="{{$g.Status}}"{{end}}
        data-occurred="{{fmtTime $g.OccurredAt}}" data-ingested="{{fmtTime $g.IngestedAt}}"
