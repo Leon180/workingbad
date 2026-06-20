@@ -174,6 +174,7 @@
   scroll.addEventListener("pointerdown", function (e) {
     dragStart = { x: e.clientX, left: scroll.scrollLeft };
     dragMoved = false;
+    scroll.classList.add("grabbing");
   });
   scroll.addEventListener("pointermove", function (e) {
     if (!dragStart) return;
@@ -183,6 +184,7 @@
   });
   function endDrag() {
     dragStart = null;
+    scroll.classList.remove("grabbing");
     setTimeout(function () { dragMoved = false; }, 0);
   }
   scroll.addEventListener("pointerup", endDrag);
