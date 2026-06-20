@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/Leon180/workingbad/compare/v0.9.0...v0.9.1) (2026-06-20)
+
+
+### Bug Fixes
+
+* **repo:** EdgesAt time-travels detach via detached_at (Slice F1a) ([#112](https://github.com/Leon180/workingbad/issues/112)) ([2946491](https://github.com/Leon180/workingbad/commit/29464913cd6ecc5a3ebd86194b616705ee16e40f))
+
 ## [0.9.0](https://github.com/Leon180/workingbad/compare/v0.8.2...v0.9.0) (2026-06-14)
 
 
