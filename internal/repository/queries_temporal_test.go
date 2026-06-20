@@ -210,3 +210,52 @@ func firstID(es []domain.Entry) string {
 	}
 	return es[0].ID
 }
+
+// TestEdgesAt_ExcludesDetachedEdge covers the F1 detach fix: a detached edge
+// must vanish from EdgesAt at/after the detach instant, but still appear for an
+// asOf between attach and detach (it WAS live then). Before the fix, DetachEdge
+// recorded no timestamp and EdgesAt's superseded_by predicate kept detached
+// edges live at every asOf.
+func TestEdgesAt_ExcludesDetachedEdge(t *testing.T) {
+	s := newService(t)
+	g, _ := s.InsertEntry(ctx(t), domain.Entry{
+		Type: domain.EntryTypeGoal, Origin: domain.OriginLocal,
+		Source: domain.SourceManual, SourceRef: "g-det", Title: "Goal", Status: domain.StatusOpen,
+	})
+	a, _ := s.InsertEntry(ctx(t), domain.Entry{
+		Type: domain.EntryTypeResearch, Origin: domain.OriginLocal,
+		Source: domain.SourceManual, SourceRef: "a-det", Title: "Activity",
+	})
+	edge, err := s.AttachToGoal(ctx(t), a.ID, g.ID)
+	if err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	betweenAttachAndDetach := time.Now().UTC()
+	time.Sleep(50 * time.Millisecond)
+
+	if err := s.DetachFromGoal(ctx(t), edge.ID); err != nil {
+		t.Fatalf("detach: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	afterDetach := time.Now().UTC()
+
+	// Between attach and detach: the edge was live.
+	got, err := s.EdgesAt(ctx(t), betweenAttachAndDetach, EdgeFilter{Relation: domain.RelationPartOf})
+	if err != nil {
+		t.Fatalf("EdgesAt(between): %v", err)
+	}
+	if len(got) != 1 {
+		t.Errorf("EdgesAt(between attach and detach): got %d edges, want 1", len(got))
+	}
+
+	// After detach: the edge is gone.
+	got, err = s.EdgesAt(ctx(t), afterDetach, EdgeFilter{Relation: domain.RelationPartOf})
+	if err != nil {
+		t.Fatalf("EdgesAt(after detach): %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("EdgesAt(after detach): got %d edges, want 0 (detached)", len(got))
+	}
+}

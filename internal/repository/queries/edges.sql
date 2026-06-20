@@ -12,7 +12,7 @@ INSERT INTO edges
 VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?);
 
 -- name: DetachEdge :execrows
-UPDATE edges SET is_current = 0 WHERE id = ? AND is_current = 1;
+UPDATE edges SET is_current = 0, detached_at = ? WHERE id = ? AND is_current = 1;
 
 -- name: GetGoalActivitiesByLogicalID :many
 -- Edges key on the node stable id (logical_id == node.id) since migration 0017,

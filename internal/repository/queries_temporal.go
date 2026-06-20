@@ -190,13 +190,14 @@ func (s *Service) EdgesAt(ctx context.Context, asOf time.Time, filter EdgeFilter
 	asOfStr := asOf.UTC().Format(time.RFC3339Nano)
 
 	where := []string{
+		// Created by asOf …
 		"COALESCE(ed.ingested_at, ed.created_at) <= ?",
 		"COALESCE(ed.occurred_at, ed.ingested_at, ed.created_at) <= ?",
-		`(ed.superseded_by IS NULL OR EXISTS (
-            SELECT 1 FROM edges se
-            WHERE se.id = ed.superseded_by
-              AND COALESCE(se.ingested_at, se.created_at) > ?
-        ))`,
+		// … and not detached by asOf. (Post-D2e edges only create/detach — no
+		// supersede — so the old superseded_by predicate was vestigial and, with
+		// superseded_by always NULL, wrongly kept detached edges live. detached_at
+		// is RFC3339Nano like asOf, so the string compare is chronological.)
+		"(ed.detached_at IS NULL OR ed.detached_at > ?)",
 	}
 	args := []any{asOfStr, asOfStr, asOfStr}
 	if filter.Relation != "" {
