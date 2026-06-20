@@ -2,6 +2,7 @@ package repository
 
 import (
 	"testing"
+	"time"
 
 	"github.com/Leon180/workingbad/internal/adapters/ai/mock"
 	"github.com/Leon180/workingbad/internal/domain"
@@ -345,4 +346,26 @@ func setupGoalAndActivity(t *testing.T, s *Service) (domain.Entry, domain.Entry)
 		t.Fatalf("convert activity: %v", err)
 	}
 	return goal, activity
+}
+
+// TestAttachToGoal_SetsManualConfidence: a human-asserted edge carries
+// confidence 1.0 (Slice F2a), surfaced both on the returned edge and via
+// EdgesAt — the LLM relate step later writes its own scores.
+func TestAttachToGoal_SetsManualConfidence(t *testing.T) {
+	s := newService(t)
+	goal, activity := setupGoalAndActivity(t, s)
+	edge, err := s.AttachToGoal(ctx(t), activity.ID, goal.ID)
+	if err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	if edge.Confidence != 1.0 {
+		t.Errorf("returned edge confidence = %v, want 1.0", edge.Confidence)
+	}
+	got, err := s.EdgesAt(ctx(t), time.Now().UTC(), EdgeFilter{Relation: domain.RelationPartOf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Confidence != 1.0 {
+		t.Errorf("EdgesAt confidence = %v (n=%d), want 1.0", got, len(got))
+	}
 }

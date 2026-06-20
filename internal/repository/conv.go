@@ -88,6 +88,7 @@ func edgeFromSqlc(e sqlcdb.Edge) (domain.Edge, error) {
 		IsCurrent:    e.IsCurrent == 1,
 		SupersededBy: nsToString(e.SupersededBy),
 		Metadata:     e.Metadata,
+		Confidence:   e.Confidence,
 		OccurredAt:   occurred,
 		IngestedAt:   ingested,
 	}, nil

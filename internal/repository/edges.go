@@ -97,6 +97,7 @@ func (s *Service) AttachToGoal(ctx context.Context, activityID, goalID string) (
 		Relation:   domain.RelationPartOf,
 		IsCurrent:  true,
 		Metadata:   "{}",
+		Confidence: 1.0, // manual = human-asserted (matches the column DEFAULT)
 		OccurredAt: now,
 		IngestedAt: now,
 	}, nil
