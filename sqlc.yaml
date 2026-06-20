@@ -21,6 +21,7 @@ sql:
       # 0018 adds edges.detached_at, referenced by DetachEdge + read by EdgesAt.
       # (0012-0017 are node-layer tables using hand-written SQL, not sqlc.)
       - internal/migrations/0018_edges_detached_at.sql
+      - internal/migrations/0019_edge_confidence.sql
       - internal/repository/queries/fts_schema_shim.sql
     gen:
       go:

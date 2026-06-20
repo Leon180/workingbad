@@ -169,8 +169,12 @@ type Edge struct {
 	IsCurrent    bool
 	SupersededBy string
 	Metadata     string
-	OccurredAt   time.Time
-	IngestedAt   time.Time
+	// Confidence in [0,1]: 1.0 for human-asserted (manual) edges; the LLM
+	// relate step (Slice F) writes its own score. Consumed by the future
+	// confidence UI (dashed/solid at the 0.7 threshold); not yet rendered.
+	Confidence float64
+	OccurredAt time.Time
+	IngestedAt time.Time
 }
 
 // Segment is the work-session lifecycle carrier. Idempotency key authority

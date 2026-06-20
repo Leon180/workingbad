@@ -22,6 +22,7 @@ type Edge struct {
 	Actor        sql.NullString
 	Reason       sql.NullString
 	DetachedAt   sql.NullString
+	Confidence   float64
 }
 
 type EntriesFt struct {
