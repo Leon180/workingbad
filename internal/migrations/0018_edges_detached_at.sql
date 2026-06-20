@@ -18,8 +18,11 @@ ALTER TABLE edges ADD COLUMN detached_at TEXT;
 -- Backfill: any already-detached row (is_current=0 from a prior detach or the
 -- 0017 dedup) gets a best-effort detach time so EdgesAt(now) excludes it. The
 -- true detach instant is unrecorded for old rows; ingested_at is the safest
--- value (treats them as detached since they were written) and is RFC3339Nano,
--- matching the format EdgesAt compares against.
+-- value (treats them as detached since they were written). Both ingested_at and
+-- created_at are RFC3339Nano: every edge row was written through InsertEdge,
+-- which formats via formatRFC, and 0002 declares no SQLite DEFAULT — so the
+-- value EdgesAt lexically compares against is always the same format as asOf
+-- (the D2e ms+Z vs nanosecond hazard does not apply here).
 -- +goose StatementBegin
 UPDATE edges SET detached_at = COALESCE(ingested_at, created_at)
  WHERE is_current = 0 AND detached_at IS NULL;

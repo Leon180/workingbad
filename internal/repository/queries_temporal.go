@@ -148,11 +148,10 @@ func (s *Service) GoalActivitiesAt(ctx context.Context, goalID string, asOf time
             JOIN edges  ed ON ed.from_id = e.logical_id AND ed.relation = 'part_of'
            WHERE ed.to_id = (SELECT seed.logical_id FROM entries seed WHERE seed.id = ?)
              AND COALESCE(ed.ingested_at, ed.created_at) <= ?
-             AND (ed.superseded_by IS NULL OR EXISTS (
-                 SELECT 1 FROM edges se
-                 WHERE se.id = ed.superseded_by
-                   AND COALESCE(se.ingested_at, se.created_at) > ?
-             ))
+             -- edge live at asOf: created by then AND not detached by then.
+             -- (Same detach predicate as EdgesAt; edges only create/detach
+             -- post-D2e, so the old superseded_by branch was vestigial.)
+             AND (ed.detached_at IS NULL OR ed.detached_at > ?)
              AND e.type = 'activity'
              AND COALESCE(e.ingested_at, e.created_at) <= ?
              AND COALESCE(e.occurred_at, e.ingested_at, e.created_at) <= ?
@@ -214,7 +213,7 @@ func (s *Service) EdgesAt(ctx context.Context, asOf time.Time, filter EdgeFilter
 	}
 
 	q := `SELECT ed.id, ed.from_id, ed.to_id, ed.relation, ed.is_current,
-                 COALESCE(ed.superseded_by, ''),
+                 COALESCE(ed.superseded_by, ''), -- vestigial: always '' post-D2e
                  COALESCE(ed.actor, ''), COALESCE(ed.reason, ''),
                  ed.metadata,
                  COALESCE(ed.occurred_at, ed.ingested_at, ed.created_at),
