@@ -210,3 +210,96 @@ func firstID(es []domain.Entry) string {
 	}
 	return es[0].ID
 }
+
+// TestEdgesAt_ExcludesDetachedEdge covers the F1 detach fix: a detached edge
+// must vanish from EdgesAt at/after the detach instant, but still appear for an
+// asOf between attach and detach (it WAS live then). Before the fix, DetachEdge
+// recorded no timestamp and EdgesAt's superseded_by predicate kept detached
+// edges live at every asOf.
+func TestEdgesAt_ExcludesDetachedEdge(t *testing.T) {
+	s := newService(t)
+	g, _ := s.InsertEntry(ctx(t), domain.Entry{
+		Type: domain.EntryTypeGoal, Origin: domain.OriginLocal,
+		Source: domain.SourceManual, SourceRef: "g-det", Title: "Goal", Status: domain.StatusOpen,
+	})
+	a, _ := s.InsertEntry(ctx(t), domain.Entry{
+		Type: domain.EntryTypeResearch, Origin: domain.OriginLocal,
+		Source: domain.SourceManual, SourceRef: "a-det", Title: "Activity to detach",
+	})
+	keep, _ := s.InsertEntry(ctx(t), domain.Entry{
+		Type: domain.EntryTypeResearch, Origin: domain.OriginLocal,
+		Source: domain.SourceManual, SourceRef: "a-keep", Title: "Activity that stays",
+	})
+	edge, err := s.AttachToGoal(ctx(t), a.ID, g.ID)
+	if err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	keepEdge, err := s.AttachToGoal(ctx(t), keep.ID, g.ID) // never detached — the baseline
+	if err != nil {
+		t.Fatalf("attach keep: %v", err)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	betweenAttachAndDetach := time.Now().UTC()
+	time.Sleep(50 * time.Millisecond)
+
+	if err := s.DetachFromGoal(ctx(t), edge.ID); err != nil {
+		t.Fatalf("detach: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	afterDetach := time.Now().UTC()
+
+	// Between attach and detach: both edges were live.
+	got, err := s.EdgesAt(ctx(t), betweenAttachAndDetach, EdgeFilter{Relation: domain.RelationPartOf})
+	if err != nil {
+		t.Fatalf("EdgesAt(between): %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("EdgesAt(between attach and detach): got %d edges, want 2", len(got))
+	}
+
+	// After detach: the detached edge is gone, the never-detached one remains.
+	// The baseline guards against an inverted predicate that would drop both.
+	got, err = s.EdgesAt(ctx(t), afterDetach, EdgeFilter{Relation: domain.RelationPartOf})
+	if err != nil {
+		t.Fatalf("EdgesAt(after detach): %v", err)
+	}
+	if len(got) != 1 || got[0].ID != keepEdge.ID {
+		t.Errorf("EdgesAt(after detach): got %v, want only the never-detached edge %s", got, keepEdge.ID)
+	}
+}
+
+// TestGoalActivitiesAt_ExcludesDetached directly covers the F1a blocker fix:
+// GoalActivitiesAt must drop an activity whose part_of edge was detached, for
+// asOf after the detach (same predicate as EdgesAt, previously unfixed here).
+func TestGoalActivitiesAt_ExcludesDetached(t *testing.T) {
+	s := newService(t)
+	g, _ := s.InsertEntry(ctx(t), domain.Entry{
+		Type: domain.EntryTypeGoal, Origin: domain.OriginLocal,
+		Source: domain.SourceManual, SourceRef: "ga-det-g", Title: "Goal", Status: domain.StatusOpen,
+	})
+	a, _ := s.InsertEntry(ctx(t), domain.Entry{
+		Type: domain.EntryTypeActivity, Origin: domain.OriginLocal,
+		Source: domain.SourceManual, SourceRef: "ga-det-a", Title: "activity",
+	})
+	edge, err := s.AttachToGoal(ctx(t), a.ID, g.ID)
+	if err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	between := time.Now().UTC()
+	time.Sleep(50 * time.Millisecond)
+	if err := s.DetachFromGoal(ctx(t), edge.ID); err != nil {
+		t.Fatalf("detach: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	after := time.Now().UTC()
+
+	if got, err := s.GoalActivitiesAt(ctx(t), g.ID, between); err != nil || len(got) != 1 {
+		t.Errorf("GoalActivitiesAt(between) = %d err=%v, want 1", len(got), err)
+	}
+	if got, err := s.GoalActivitiesAt(ctx(t), g.ID, after); err != nil || len(got) != 0 {
+		t.Errorf("GoalActivitiesAt(after detach) = %d err=%v, want 0", len(got), err)
+	}
+}
