@@ -170,8 +170,8 @@ type Edge struct {
 	SupersededBy string
 	Metadata     string
 	// Confidence in [0,1]: 1.0 for human-asserted (manual) edges; the LLM
-	// relate step (Slice F) writes its own score. Drives the dashed/solid
-	// graph rendering (solid at >= 0.7).
+	// relate step (Slice F) writes its own score. Consumed by the future
+	// confidence UI (dashed/solid at the 0.7 threshold); not yet rendered.
 	Confidence float64
 	OccurredAt time.Time
 	IngestedAt time.Time
