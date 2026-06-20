@@ -24,7 +24,12 @@ Each change is one focused, reviewable PR (small > big):
 5. Request Copilot review (when the account has it enabled).
 6. **Merge when CI is fully green AND no outstanding review comments** — a PR
    may auto-merge if it's sat ~10 min after open with no comments and all
-   required checks pass. `release-please` then auto-cuts the version.
+   required checks pass. Bot comments (`github-actions`, `dependabot`) are
+   non-blocking. `release-please` then auto-cuts the version.
+
+Parallel sessions use **a git worktree each** so they don't clobber one another;
+if two sessions open overlapping PRs, consolidate to one (streamline) rather
+than merging duplicates.
 
 CI gate (the `main` ruleset, required + strict): build/vet/test · golangci-lint ·
 govulncheck · CodeQL · sqlc drift · migration discipline. Auto-merge waits for
@@ -38,7 +43,10 @@ separate `schema-frozen` git tag, decoupled from the version.
 
 ## Big-version-jump full review
 At each **major version jump** (notably the run-up to v1.0.0), run a full
-multi-agent review before tagging — not just the per-PR reviews:
+multi-agent review before tagging — not just the per-PR reviews. **Don't trust
+green CI alone**: it doesn't exercise major dependency bumps, schema/architecture
+slices, or the release tooling itself, so those need human-or-agent eyes.
+Beyond the per-PR reviews this pass runs:
 - `architect` (integrity + the next-arc readiness),
 - `go-reviewer` ×N over the codebase (correctness/perf/security),
 - `silent-failure-hunter` (swallowed errors).
