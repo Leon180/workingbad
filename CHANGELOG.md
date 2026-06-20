@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.2](https://github.com/Leon180/workingbad/compare/v0.9.1...v0.9.2) (2026-06-20)
+
+
+### Refactors
+
+* **web:** reconcile graph v2 styling to exact design-system values ([#113](https://github.com/Leon180/workingbad/issues/113)) ([f272b20](https://github.com/Leon180/workingbad/commit/f272b20c175812219634c9f527131c47b09bf68a))
+
 ## [0.9.1](https://github.com/Leon180/workingbad/compare/v0.9.0...v0.9.1) (2026-06-20)
 
 
