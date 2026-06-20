@@ -449,9 +449,31 @@ header nav a:hover {
 .tl-scroll {
   overflow-x: auto;
   overflow-y: hidden;
+  cursor: grab;
+  scrollbar-color: #484f58 transparent;
   background:
     radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.04) 1px, transparent 0) 0 0 / 22px 22px,
     linear-gradient(180deg, #0d1117 0%, #161b22 100%);
+}
+
+.tl-scroll.grabbing {
+  cursor: grabbing;
+}
+
+.tl-scroll::-webkit-scrollbar {
+  height: 11px;
+}
+
+.tl-scroll::-webkit-scrollbar-thumb {
+  background: #484f58;
+  border-radius: 6px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+.tl-scroll::-webkit-scrollbar-thumb:hover {
+  background: #6e7681;
+  background-clip: content-box;
 }
 
 .tl-scroll .graph-svg {
@@ -472,25 +494,27 @@ header nav a:hover {
 
 .tl-titles {
   left: 0;
-  background: linear-gradient(90deg, #161b22 62%, rgba(22, 27, 34, 0));
+  background: linear-gradient(90deg, #0d1117 0%, #0d1117 72%, rgba(13, 17, 23, 0) 100%);
 }
 
 .tl-goals {
   right: 0;
-  background: linear-gradient(270deg, #161b22 62%, rgba(22, 27, 34, 0));
+  background: linear-gradient(270deg, #161b22 0%, #161b22 68%, rgba(22, 27, 34, 0) 100%);
 }
 
 .tl-title {
   position: absolute;
-  right: 10px;
+  right: 16px;
+  transform: translateY(-50%);
   text-align: right;
   font-size: 12px;
   font-weight: 600;
+  line-height: 1.2;
   color: #c9d1d9;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 150px;
+  max-width: 128px;
 }
 
 .tl-title.lane-label-orphan {
@@ -499,25 +523,26 @@ header nav a:hover {
   font-weight: normal;
 }
 
-/* goal anchors as HTML boxes — reuse the lane stroke colours + status border
-   treatments from the SVG goals (status = border style, never fill colour). */
+/* goal anchors as HTML boxes — transparent fill, lane-coloured border, status
+   as border treatment (grill §3.3: status via border style, never fill). */
 .tl-goal {
   position: absolute;
-  left: 12px;
-  right: 8px;
-  height: 56px;
+  right: 18px;
+  transform: translateY(-50%);
+  width: 178px;
+  height: 50px;
   display: flex;
   flex-direction: column;
+  align-items: center;
   justify-content: center;
   gap: 2px;
-  padding: 0 12px;
+  padding: 0 8px;
   border: 2px solid #6a6a6a;
   border-radius: 10px;
-  background: #161b22;
   color: #e6edf3;
   text-decoration: none;
   pointer-events: auto;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  box-sizing: border-box;
 }
 
 .tl-goal:hover {
@@ -526,71 +551,87 @@ header nav a:hover {
 }
 
 .tl-goal-title {
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 600;
+  color: #e6edf3;
+  text-align: center;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .tl-goal-status {
-  font-size: 10.5px;
+  font-size: 10px;
   font-style: italic;
   color: #8b949e;
 }
 
-.tl-goal.lane-0 { border-color: #58a6ff; background: #0d1f33; }
-.tl-goal.lane-1 { border-color: #3fb950; background: #0d2616; }
-.tl-goal.lane-2 { border-color: #ff9f43; background: #2a1d0d; }
-.tl-goal.lane-3 { border-color: #a371f7; background: #1d0f33; }
-.tl-goal.lane-4 { border-color: #2ec4b6; background: #0d2422; }
-.tl-goal.lane-5 { border-color: #ff7eb6; background: #2a0d1c; }
+.tl-goal.lane-0 { border-color: #58a6ff; }
+.tl-goal.lane-1 { border-color: #3fb950; }
+.tl-goal.lane-2 { border-color: #ff9f43; }
+.tl-goal.lane-3 { border-color: #a371f7; }
+.tl-goal.lane-4 { border-color: #2ec4b6; }
+.tl-goal.lane-5 { border-color: #ff7eb6; }
 
 .tl-goal.status-open { border-style: dashed; }
-.tl-goal.status-in_progress { box-shadow: 0 0 6px rgba(255, 255, 255, 0.3); }
-.tl-goal.status-done { opacity: 0.62; }
-.tl-goal.status-archived { opacity: 0.4; }
+.tl-goal.status-in_progress { box-shadow: 0 0 7px rgba(255, 255, 255, 0.22); }
+.tl-goal.status-done { opacity: 0.7; }
+.tl-goal.status-archived { opacity: 0.45; }
 
 .tl-goal.dimmed { opacity: 0.14; }
-.tl-goal.selected { border-color: #fff; box-shadow: 0 0 0 1px #fff; }
+.tl-goal.selected { outline: 2px solid #fff; outline-offset: 1px; }
 
 /* time-density zoom control — overlaid top-right of the canvas */
 .graph-zoom {
   position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 5;
+  top: 10px;
+  right: 10px;
+  z-index: 6;
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 3px;
   padding: 3px;
-  background: rgba(13, 17, 23, 0.85);
+  background: rgba(13, 17, 23, 0.82);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
   border: 1px solid #30363d;
-  border-radius: 6px;
+  border-radius: 7px;
 }
 
 .graph-zoom button {
-  background: #21262d;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
   color: #c9d1d9;
-  border: 1px solid #30363d;
-  border-radius: 4px;
+  border: none;
+  border-radius: 5px;
   cursor: pointer;
   font-family: inherit;
-  font-size: 0.9rem;
+  font-size: 15px;
   line-height: 1;
-  padding: 0.25rem 0.5rem;
 }
 
 .graph-zoom button:hover {
-  background: #30363d;
+  background: rgba(255, 255, 255, 0.08);
   color: #fff;
 }
 
 .graph-zoom #graph-zoom-pct {
-  color: #8b949e;
-  font-size: 0.72rem;
-  min-width: 3.2rem;
+  min-width: 44px;
   text-align: center;
+  color: #8b949e;
+  font-size: 11px;
+}
+
+.graph-zoom .zoom-sep {
+  width: 1px;
+  height: 16px;
+  background: #30363d;
+  margin: 0 2px;
 }
 
 /* client-side graph controls (search + edge toggles) — JS reveals this */
@@ -1200,10 +1241,11 @@ a:hover {
 /* ════════════════════════════════════════════════════════════════════
    DARK THEME (graph-ui v2 — dark is the default; see base.html pre-paint)
 
-   Dark = github-dark family so the light shell stops fighting the always-
-   dark graph canvas. All overrides live under one [data-theme="dark"]
-   scope (bare attr selector so nested dark regions work too). The graph
-   canvas itself is hardcoded dark above and intentionally unaffected here.
+   Values mirror the design system's dark token scope (tokens/colors.css):
+   github-dark shell so the light chrome stops fighting the always-dark
+   graph canvas. One [data-theme="dark"] scope (bare attr selector so nested
+   dark regions work). The graph canvas is hardcoded dark above and
+   intentionally untouched here.
    ═══════════════════════════════════════════════════════════════════ */
 :root[data-theme="dark"],
 [data-theme="dark"] {
@@ -1214,6 +1256,7 @@ a:hover {
   --accent: #58a6ff;
   --border: #30363d;
   --row-alt: #161b22;
+  --surface: #161b22;
 }
 
 /* surfaces that were hardcoded light in the shell */
@@ -1222,22 +1265,27 @@ a:hover {
 [data-theme="dark"] .body pre,
 [data-theme="dark"] .create-form input,
 [data-theme="dark"] .create-form textarea {
-  background: #161b22;
+  background: var(--surface);
   color: var(--fg);
   border-color: var(--border);
 }
 
-/* native buttons themed explicitly */
-[data-theme="dark"] .filter-bar button,
-[data-theme="dark"] .form-actions button,
-[data-theme="dark"] .inline-form button,
+/* native form controls + buttons themed explicitly (don't inherit surface) */
 [data-theme="dark"] .filter-bar select,
 [data-theme="dark"] .filter-bar input,
 [data-theme="dark"] .inline-form select,
 [data-theme="dark"] .inline-form input {
-  background: #21262d;
+  background: var(--surface);
   color: var(--fg);
   border: 1px solid var(--border);
+}
+
+[data-theme="dark"] .filter-bar button,
+[data-theme="dark"] .form-actions button,
+[data-theme="dark"] .inline-form button {
+  background: var(--surface);
+  color: var(--fg);
+  border: 1px solid #484f58;
 }
 
 [data-theme="dark"] .filter-bar button:hover,
@@ -1247,53 +1295,56 @@ a:hover {
 }
 
 /* current-version highlight rows — deep amber instead of pale yellow */
-[data-theme="dark"] table tbody tr.current,
+[data-theme="dark"] table tbody tr.current {
+  background: #241f0d;
+}
+
 [data-theme="dark"] table tbody tr.current:nth-child(even) {
-  background: #2a2410;
+  background: #2b2410;
 }
 
 /* banners — deep-tinted variants */
 [data-theme="dark"] .banner {
-  background: #2a2410;
-  border-color: #6b5a1f;
+  background: #241f0d;
+  border-color: #6b5d2a;
   color: var(--fg);
 }
 
 [data-theme="dark"] .banner.timetravel {
   background: #0d1f33;
-  border-color: #2a5a8f;
+  border-color: #2a5a99;
 }
 
 [data-theme="dark"] .banner.error {
-  background: #2a1414;
-  border-color: #8f3030;
-  color: #ffb3b3;
+  background: #2a1212;
+  border-color: #99403f;
+  color: #ff9f9f;
 }
 
 [data-theme="dark"] .banner.success {
   background: #0d2616;
-  border-color: #2f6b3a;
-  color: #8fe0a0;
+  border-color: #2f6b3f;
+  color: #7ee2a0;
 }
 
 /* entry-type badges — deep-tint dark variants (keep the hue, drop the pastel) */
-[data-theme="dark"] .badge.type-goal { background: #2a1d0d; border-color: #6b4f1f; }
-[data-theme="dark"] .badge.type-activity { background: #0d1f33; border-color: #2a5a8f; }
-[data-theme="dark"] .badge.type-decision { background: #1d0f33; border-color: #5a3f8f; }
-[data-theme="dark"] .badge.type-research { background: #0d2616; border-color: #2f6b3a; }
-[data-theme="dark"] .badge.type-discuss { background: #2a1414; border-color: #8f3030; }
-[data-theme="dark"] .badge.degraded { background: #2a1d0d; border-color: #8f5f1f; color: #ffce9e; }
+[data-theme="dark"] .badge.type-goal { background: #2a210d; border-color: #c29a44; }
+[data-theme="dark"] .badge.type-activity { background: #0d2030; border-color: #4f8fbf; }
+[data-theme="dark"] .badge.type-decision { background: #1d1033; border-color: #9a6fdf; }
+[data-theme="dark"] .badge.type-research { background: #0d2616; border-color: #4aa874; }
+[data-theme="dark"] .badge.type-discuss { background: #2a0d12; border-color: #cf6464; }
+[data-theme="dark"] .badge.degraded { background: #2e2410; border-color: #c98b3a; }
 
 [data-theme="dark"] .inline-form button.danger {
-  background: #3a1414;
-  border-color: #8f3030;
-  color: #ffb3b3;
+  background: #2a1212;
+  border-color: #99403f;
+  color: #ffb3ad;
 }
 
 [data-theme="dark"] .pending-cta button {
-  background: #2a2410;
-  border-color: #c08000;
-  color: #ffce6b;
+  background: #241f0d;
+  border-color: #e3b341;
+  color: #e3b341;
 }
 
 /* header theme toggle button (top-right, beside the pending cta) */
@@ -1318,8 +1369,4 @@ a:hover {
 
 .theme-toggle:hover {
   border-color: var(--accent);
-}
-
-[data-theme="dark"] .theme-toggle {
-  background: #21262d;
 }
