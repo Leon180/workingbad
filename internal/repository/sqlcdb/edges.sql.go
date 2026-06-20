@@ -28,7 +28,7 @@ func (q *Queries) DetachEdge(ctx context.Context, arg DetachEdgeParams) (int64, 
 }
 
 const getEdgeByID = `-- name: GetEdgeByID :one
-SELECT id, from_id, to_id, relation, is_current, superseded_by, metadata, created_at, occurred_at, ingested_at, actor, reason, detached_at FROM edges WHERE id = ?
+SELECT id, from_id, to_id, relation, is_current, superseded_by, metadata, created_at, occurred_at, ingested_at, actor, reason, detached_at, confidence FROM edges WHERE id = ?
 `
 
 func (q *Queries) GetEdgeByID(ctx context.Context, id string) (Edge, error) {
@@ -48,6 +48,7 @@ func (q *Queries) GetEdgeByID(ctx context.Context, id string) (Edge, error) {
 		&i.Actor,
 		&i.Reason,
 		&i.DetachedAt,
+		&i.Confidence,
 	)
 	return i, err
 }

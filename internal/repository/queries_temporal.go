@@ -215,7 +215,7 @@ func (s *Service) EdgesAt(ctx context.Context, asOf time.Time, filter EdgeFilter
 	q := `SELECT ed.id, ed.from_id, ed.to_id, ed.relation, ed.is_current,
                  COALESCE(ed.superseded_by, ''), -- vestigial: always '' post-D2e
                  COALESCE(ed.actor, ''), COALESCE(ed.reason, ''),
-                 ed.metadata,
+                 ed.metadata, ed.confidence,
                  COALESCE(ed.occurred_at, ed.ingested_at, ed.created_at),
                  COALESCE(ed.ingested_at, ed.created_at)
             FROM edges ed
@@ -235,7 +235,7 @@ func (s *Service) EdgesAt(ctx context.Context, asOf time.Time, filter EdgeFilter
 		var isCur int
 		if err := rows.Scan(
 			&e.ID, &e.FromID, &e.ToID, &rel, &isCur, &supBy,
-			&actor, &reason, &e.Metadata, &occurred, &ingested,
+			&actor, &reason, &e.Metadata, &e.Confidence, &occurred, &ingested,
 		); err != nil {
 			return nil, err
 		}
