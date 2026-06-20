@@ -11,11 +11,16 @@ import (
 )
 
 const detachEdge = `-- name: DetachEdge :execrows
-UPDATE edges SET is_current = 0 WHERE id = ? AND is_current = 1
+UPDATE edges SET is_current = 0, detached_at = ? WHERE id = ? AND is_current = 1
 `
 
-func (q *Queries) DetachEdge(ctx context.Context, id string) (int64, error) {
-	result, err := q.db.ExecContext(ctx, detachEdge, id)
+type DetachEdgeParams struct {
+	DetachedAt sql.NullString
+	ID         string
+}
+
+func (q *Queries) DetachEdge(ctx context.Context, arg DetachEdgeParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, detachEdge, arg.DetachedAt, arg.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -23,7 +28,7 @@ func (q *Queries) DetachEdge(ctx context.Context, id string) (int64, error) {
 }
 
 const getEdgeByID = `-- name: GetEdgeByID :one
-SELECT id, from_id, to_id, relation, is_current, superseded_by, metadata, created_at, occurred_at, ingested_at, actor, reason FROM edges WHERE id = ?
+SELECT id, from_id, to_id, relation, is_current, superseded_by, metadata, created_at, occurred_at, ingested_at, actor, reason, detached_at FROM edges WHERE id = ?
 `
 
 func (q *Queries) GetEdgeByID(ctx context.Context, id string) (Edge, error) {
@@ -42,6 +47,7 @@ func (q *Queries) GetEdgeByID(ctx context.Context, id string) (Edge, error) {
 		&i.IngestedAt,
 		&i.Actor,
 		&i.Reason,
+		&i.DetachedAt,
 	)
 	return i, err
 }
