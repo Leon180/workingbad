@@ -52,6 +52,7 @@ Sources → TruthSource(core + SQLite) → Sinks
 - AI 相關設計查 `cost-aware-llm-pipeline`、`regex-vs-llm-structured-text`、`agentic-engineering`、`eval-harness`。
 - 完成宣稱前跑 `verification-loop`。
 - 迭代機制見 [docs/ROADMAP.md](../docs/ROADMAP.md)：階段邊界用 `project-review-checkpoint` 審查。
+- 開發流程 / harness（自動 PR loop、CI gate、big-version full review + streamline）見 [docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md)。
 - **Context 紀律：任何超過 5 行的細節 → 寫進 skill，不寫進本檔。** CLAUDE.md 只當索引，
   目標 < 100 行（有 PostToolUse hook 守門）。維護用 `skill-stocktake` / `strategic-compact` / `/harness-audit`。
 
