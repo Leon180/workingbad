@@ -21,6 +21,7 @@ type Edge struct {
 	IngestedAt   sql.NullString
 	Actor        sql.NullString
 	Reason       sql.NullString
+	DetachedAt   sql.NullString
 }
 
 type EntriesFt struct {
