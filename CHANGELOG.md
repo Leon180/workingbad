@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/Leon180/workingbad/compare/v0.9.2...v0.10.0) (2026-06-20)
+
+
+### Features
+
+* **repo:** edge.confidence column (Slice F2a) ([#116](https://github.com/Leon180/workingbad/issues/116)) ([4de6a29](https://github.com/Leon180/workingbad/commit/4de6a29245b655d9480bf36f9f1adc8394611d1d))
+
 ## [0.9.2](https://github.com/Leon180/workingbad/compare/v0.9.1...v0.9.2) (2026-06-20)
 
 
