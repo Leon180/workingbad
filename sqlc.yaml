@@ -18,6 +18,9 @@ sql:
       - internal/migrations/0008_bitemporal_columns.sql
       - internal/migrations/0010_bitemporal_indexes.sql
       - internal/migrations/0011_sync_state_append_only.sql
+      # 0018 adds edges.detached_at, referenced by DetachEdge + read by EdgesAt.
+      # (0012-0017 are node-layer tables using hand-written SQL, not sqlc.)
+      - internal/migrations/0018_edges_detached_at.sql
       - internal/repository/queries/fts_schema_shim.sql
     gen:
       go:

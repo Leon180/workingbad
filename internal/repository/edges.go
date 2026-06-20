@@ -107,7 +107,15 @@ func (s *Service) DetachFromGoal(ctx context.Context, edgeID string) error {
 	if edgeID == "" {
 		return errors.New("repository: DetachFromGoal requires edge_id")
 	}
-	n, err := s.q.DetachEdge(ctx, edgeID)
+	nowRFC, err := formatRFC(time.Now().UTC())
+	if err != nil {
+		return fmt.Errorf("repository: format now: %w", err)
+	}
+	// Record the detach instant so EdgesAt can exclude this edge from snapshots
+	// at/after now while still showing it for historical asOf < now.
+	n, err := s.q.DetachEdge(ctx, sqlcdb.DetachEdgeParams{
+		DetachedAt: stringToNS(nowRFC), ID: edgeID,
+	})
 	if err != nil {
 		return fmt.Errorf("repository: detach: %w", err)
 	}
