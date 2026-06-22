@@ -21,6 +21,7 @@ import (
 type SummarizeFunc func(ctx context.Context, changes []domain.RawChange) (title, body string, err error)
 type ClassifyFunc func(ctx context.Context, content string) (domain.EntryType, float64, error)
 type RelateFunc func(ctx context.Context, e domain.Entry, candidates []domain.Entry) ([]domain.Edge, error)
+type SplitFunc func(ctx context.Context, e domain.Entry) ([]domain.NodeDraft, error)
 
 // Provider is a thread-safe deterministic AIProvider mock. Build via New()
 // and customise via the With* methods.
@@ -30,10 +31,12 @@ type Provider struct {
 	summarizeFunc SummarizeFunc
 	classifyFunc  ClassifyFunc
 	relateFunc    RelateFunc
+	splitFunc     SplitFunc
 
 	summarizeCalls int
 	classifyCalls  int
 	relateCalls    int
+	splitCalls     int
 
 	failAfterN int
 }
@@ -50,6 +53,7 @@ func New() *Provider {
 		summarizeFunc: defaultSummarize,
 		classifyFunc:  defaultClassify,
 		relateFunc:    defaultRelate,
+		splitFunc:     defaultSplit,
 	}
 }
 
@@ -71,11 +75,21 @@ func (p *Provider) FailAfterN(n int) *Provider {
 	return p
 }
 
-// Counts reports call counters in the order summarize, classify, relate.
-func (p *Provider) Counts() (summarize, classify, relate int) {
+// WithSplitFunc replaces the deterministic default. The override is invoked
+// outside the Provider mutex, so any state it closes over must be safe for
+// concurrent use.
+func (p *Provider) WithSplitFunc(f SplitFunc) *Provider {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.summarizeCalls, p.classifyCalls, p.relateCalls
+	p.splitFunc = f
+	return p
+}
+
+// Counts reports call counters in the order summarize, classify, relate, split.
+func (p *Provider) Counts() (summarize, classify, relate, split int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.summarizeCalls, p.classifyCalls, p.relateCalls, p.splitCalls
 }
 
 // Summarize records the call, honours FailAfterN, and delegates to the
@@ -112,6 +126,15 @@ func (p *Provider) Relate(ctx context.Context, e domain.Entry, candidates []doma
 	return fn(ctx, e, candidates)
 }
 
+// Split records the call and delegates.
+func (p *Provider) Split(ctx context.Context, e domain.Entry) ([]domain.NodeDraft, error) {
+	p.mu.Lock()
+	p.splitCalls++
+	fn := p.splitFunc
+	p.mu.Unlock()
+	return fn(ctx, e)
+}
+
 // defaultSummarize is a pure function of the change ids: sorted hash → stable
 // title/body. Same input always yields the same output. Re-summarizing the
 // same segment should therefore produce the same activity content — which
@@ -143,4 +166,15 @@ func defaultClassify(_ context.Context, _ string) (domain.EntryType, float64, er
 // defaultRelate returns no edges — Phase 1 mock does not propose anything.
 func defaultRelate(_ context.Context, _ domain.Entry, _ []domain.Entry) ([]domain.Edge, error) {
 	return nil, nil
+}
+
+// defaultSplit is the identity split: one entry → one node carrying the entry's
+// own type/title/body. The deterministic Phase 1 baseline (no over-split); tests
+// that exercise N-node splits inject WithSplitFunc.
+func defaultSplit(_ context.Context, e domain.Entry) ([]domain.NodeDraft, error) {
+	return []domain.NodeDraft{{
+		Type:  e.Type,
+		Title: e.Title,
+		Body:  e.Body,
+	}}, nil
 }

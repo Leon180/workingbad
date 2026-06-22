@@ -153,6 +153,19 @@ type Node struct {
 	UpdatedAt    time.Time
 }
 
+// NodeDraft is one node the split step (Slice F, Step 1) proposes from a single
+// entry — the semantic content only. Split returns one draft per node; the
+// orchestrator turns each into a Node via RepositoryService.CreateNode, which
+// mints identity (uuid v7), version, and timestamps, and inherits OccurredAt
+// from the source entry. Status is meaningful only for goal-typed drafts;
+// others leave it zero and CreateNode applies the type's default.
+type NodeDraft struct {
+	Type   EntryType
+	Title  string
+	Body   string
+	Status Status
+}
+
 // Edge is a typed relationship between two entries. Append-only + supersede;
 // partial-unique `(from, to, relation) WHERE is_current = 1` keeps lookups
 // deterministic. OccurredAt mirrors the entry semantics — when the relation

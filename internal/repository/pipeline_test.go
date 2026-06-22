@@ -233,7 +233,7 @@ func TestBatchMaterialize_OneSummarizeCallPerSegment(t *testing.T) {
 	if _, err := s.BatchMaterialize(ctx(t), MaterializeScope{}, provider); err != nil {
 		t.Fatalf("BatchMaterialize: %v", err)
 	}
-	summarize, _, _ := provider.Counts()
+	summarize, _, _, _ := provider.Counts()
 	if summarize != 3 {
 		t.Errorf("Summarize calls = %d, want 3 (1 per segment)", summarize)
 	}
