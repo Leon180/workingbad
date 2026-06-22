@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.14.0](https://github.com/Leon180/workingbad/compare/v0.13.0...v0.14.0) (2026-06-22)
+
+
+### Features
+
+* **repo:** Slice-F pipeline orchestrator skeleton (F5) ([#133](https://github.com/Leon180/workingbad/issues/133)) ([4c0c257](https://github.com/Leon180/workingbad/commit/4c0c257cb317d74bddc681f6f771d6d2aca9f474))
+
+## [0.13.0](https://github.com/Leon180/workingbad/compare/v0.12.0...v0.13.0) (2026-06-22)
+
+
+### Features
+
+* **ai:** content-agnostic Summarize via Summarizable (Slice F4b) ([#131](https://github.com/Leon180/workingbad/issues/131)) ([1dde08e](https://github.com/Leon180/workingbad/commit/1dde08e39e2fbcb7fc0c5a8afb9aa9c60b6a433b))
+
 ## [0.12.0](https://github.com/Leon180/workingbad/compare/v0.11.0...v0.12.0) (2026-06-22)
 
 
