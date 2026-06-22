@@ -85,6 +85,16 @@ func (p *Provider) WithSplitFunc(f SplitFunc) *Provider {
 	return p
 }
 
+// WithRelateFunc replaces the deterministic default. The fn is called with the
+// Provider mutex released, so closures must be goroutine-safe if Relate runs
+// concurrently.
+func (p *Provider) WithRelateFunc(f RelateFunc) *Provider {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.relateFunc = f
+	return p
+}
+
 // Counts reports call counters in the order summarize, classify, relate, split.
 func (p *Provider) Counts() (summarize, classify, relate, split int) {
 	p.mu.Lock()
