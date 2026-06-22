@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/Leon180/workingbad/compare/v0.10.0...v0.11.0) (2026-06-22)
+
+
+### Features
+
+* **ai:** Embedder port + deterministic mock (Slice F3) ([#124](https://github.com/Leon180/workingbad/issues/124)) ([faa3ce1](https://github.com/Leon180/workingbad/commit/faa3ce1b709e79e167f4b7b71d3f706642e7e0e0))
+
 ## [0.10.0](https://github.com/Leon180/workingbad/compare/v0.9.2...v0.10.0) (2026-06-20)
 
 
