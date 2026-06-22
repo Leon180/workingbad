@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/Leon180/workingbad/compare/v0.14.0...v0.15.0) (2026-06-22)
+
+
+### Features
+
+* **repo:** lazy/idempotent split step (Slice F6) ([#136](https://github.com/Leon180/workingbad/issues/136)) ([bc2012a](https://github.com/Leon180/workingbad/commit/bc2012a4370c210f8947c5d06cc493fe628baf21))
+
 ## [0.14.0](https://github.com/Leon180/workingbad/compare/v0.13.0...v0.14.0) (2026-06-22)
 
 
