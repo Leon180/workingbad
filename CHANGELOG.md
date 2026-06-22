@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/Leon180/workingbad/compare/v0.16.0...v0.17.0) (2026-06-22)
+
+
+### Features
+
+* **repo:** aggregate step — cluster + merge N entries:1 node (Slice F7b) ([#140](https://github.com/Leon180/workingbad/issues/140)) ([a2af569](https://github.com/Leon180/workingbad/commit/a2af569771ba409807d1d73bdbffc5bce37253c7))
+
 ## [0.16.0](https://github.com/Leon180/workingbad/compare/v0.15.0...v0.16.0) (2026-06-22)
 
 
