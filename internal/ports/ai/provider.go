@@ -29,10 +29,11 @@ type AIProvider interface {
 	// that should land as research / decision / ...).
 	Classify(ctx context.Context, content string) (domain.EntryType, float64, error)
 
-	// Summarize synthesizes one activity entry (title + body) from a slice
-	// of changes. Required; no rule fallback. The call is the lazy
-	// materialize step (push-preview triggers it; daily list views do not).
-	Summarize(ctx context.Context, changes []domain.RawChange) (title, body string, err error)
+	// Summarize synthesizes one entry (title + body) from a slice of
+	// content-agnostic items (git changes for Step 0, clustered entries/nodes
+	// for the Step 2 aggregate). Required; no rule fallback. The call is the
+	// lazy materialize step (push-preview triggers it; daily list views do not).
+	Summarize(ctx context.Context, items []domain.Summarizable) (title, body string, err error)
 
 	// Relate proposes typed edges between an entry and candidates. Real
 	// providers default to embedding cosine similarity; LLM lift only for
