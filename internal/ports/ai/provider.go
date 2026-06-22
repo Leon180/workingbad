@@ -13,6 +13,15 @@ import (
 // AIProvider is the only seam through which Classify / Summarize / Relate
 // are called. All implementations must honour the per-method contract below.
 type AIProvider interface {
+	// Split decides whether an entry maps to one work-unit node or several,
+	// returning one NodeDraft per node (Slice F, Step 1). An entry that maps
+	// cleanly to a single node returns a one-element slice; an empty slice means
+	// the entry yields no node. Real providers should prefer splitting over
+	// conflation when in doubt (over-split bias) — this is implementation
+	// guidance, not a return-shape contract. The orchestrator persists each
+	// draft and maps the entry to it.
+	Split(ctx context.Context, e domain.Entry) ([]domain.NodeDraft, error)
+
 	// Classify decides the EntryType from segment-level aggregated text plus
 	// a confidence score. For the Phase 1 git ingest path, the local-git
 	// source short-circuits this and always uses EntryTypeActivity; the
