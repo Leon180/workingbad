@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/Leon180/workingbad/compare/v0.11.0...v0.12.0) (2026-06-22)
+
+
+### Features
+
+* **ai:** Split step + NodeDraft on AIProvider (Slice F4a) ([#126](https://github.com/Leon180/workingbad/issues/126)) ([a7a1dba](https://github.com/Leon180/workingbad/commit/a7a1dba7ff396ea8a2e474a1ae3d29aa49acda46))
+
 ## [0.11.0](https://github.com/Leon180/workingbad/compare/v0.10.0...v0.11.0) (2026-06-22)
 
 
