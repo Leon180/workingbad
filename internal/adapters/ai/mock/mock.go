@@ -18,7 +18,7 @@ import (
 
 // SummarizeFunc / ClassifyFunc / RelateFunc are the swappable hook
 // signatures matching the AIProvider methods.
-type SummarizeFunc func(ctx context.Context, changes []domain.RawChange) (title, body string, err error)
+type SummarizeFunc func(ctx context.Context, items []domain.Summarizable) (title, body string, err error)
 type ClassifyFunc func(ctx context.Context, content string) (domain.EntryType, float64, error)
 type RelateFunc func(ctx context.Context, e domain.Entry, candidates []domain.Entry) ([]domain.Edge, error)
 type SplitFunc func(ctx context.Context, e domain.Entry) ([]domain.NodeDraft, error)
@@ -85,6 +85,16 @@ func (p *Provider) WithSplitFunc(f SplitFunc) *Provider {
 	return p
 }
 
+// WithRelateFunc replaces the deterministic default. The fn is called with the
+// Provider mutex released, so closures must be goroutine-safe if Relate runs
+// concurrently.
+func (p *Provider) WithRelateFunc(f RelateFunc) *Provider {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.relateFunc = f
+	return p
+}
+
 // Counts reports call counters in the order summarize, classify, relate, split.
 func (p *Provider) Counts() (summarize, classify, relate, split int) {
 	p.mu.Lock()
@@ -94,7 +104,7 @@ func (p *Provider) Counts() (summarize, classify, relate, split int) {
 
 // Summarize records the call, honours FailAfterN, and delegates to the
 // (possibly overridden) summarize function.
-func (p *Provider) Summarize(ctx context.Context, changes []domain.RawChange) (string, string, error) {
+func (p *Provider) Summarize(ctx context.Context, items []domain.Summarizable) (string, string, error) {
 	p.mu.Lock()
 	p.summarizeCalls++
 	n := p.summarizeCalls
@@ -105,7 +115,7 @@ func (p *Provider) Summarize(ctx context.Context, changes []domain.RawChange) (s
 	if failAfter > 0 && n > failAfter {
 		return "", "", ErrInjected
 	}
-	return fn(ctx, changes)
+	return fn(ctx, items)
 }
 
 // Classify records the call and delegates.
@@ -135,14 +145,15 @@ func (p *Provider) Split(ctx context.Context, e domain.Entry) ([]domain.NodeDraf
 	return fn(ctx, e)
 }
 
-// defaultSummarize is a pure function of the change ids: sorted hash → stable
-// title/body. Same input always yields the same output. Re-summarizing the
-// same segment should therefore produce the same activity content — which
-// callers can verify to prove the materialize path is deterministic.
-func defaultSummarize(_ context.Context, changes []domain.RawChange) (string, string, error) {
-	ids := make([]string, len(changes))
-	for i, c := range changes {
-		ids[i] = c.ChangeID
+// defaultSummarize is a pure function of item.ID values: sorted hash → stable
+// title/body. The identity guarantee assumes callers set ID to a stable,
+// content-derived key (BatchMaterialize uses ChangeID). Re-summarizing the same
+// segment therefore produces the same activity content — which callers can
+// verify to prove the materialize path is deterministic.
+func defaultSummarize(_ context.Context, items []domain.Summarizable) (string, string, error) {
+	ids := make([]string, len(items))
+	for i, it := range items {
+		ids[i] = it.ID
 	}
 	sort.Strings(ids)
 	h := sha256.New()
