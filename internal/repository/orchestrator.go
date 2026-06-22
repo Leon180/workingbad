@@ -9,13 +9,14 @@ import (
 	"github.com/Leon180/workingbad/internal/ports/ai"
 )
 
-// OrchestrateResult summarizes one pipeline run. An entry lands in exactly one
-// of two buckets for its split+persist outcome — EntriesProcessed (succeeded)
-// or Queued with step "split"/"aggregate" (failed, no writes) — and may ALSO
-// appear in Queued with step "relate" when persist succeeded but the later
-// relate step failed (its nodes still stand).
+// OrchestrateResult summarizes one pipeline run. For its split+persist outcome
+// an entry lands in exactly one bucket — Skipped (already split), EntriesProcessed
+// (succeeded), or Queued with step "split"/"aggregate" (failed, no writes) — and
+// may ALSO appear in Queued with step "relate" when persist succeeded but the
+// later relate step failed (its nodes still stand).
 type OrchestrateResult struct {
-	EntriesProcessed int // entries whose split + persist succeeded
+	EntriesProcessed int // entries whose split + persist succeeded this run
+	Skipped          int // entries already mapped to nodes (lazy: not re-split)
 	NodesCreated     int
 	EdgesProposed    int // proposed by relate; persistence is F8
 	Queued           []QueuedEntry
@@ -53,6 +54,10 @@ func (s *Service) Orchestrate(ctx context.Context, entries []domain.Entry, provi
 		if err != nil {
 			return res, err
 		}
+		if out.skipped {
+			res.Skipped++
+			continue
+		}
 		if out.processed {
 			res.EntriesProcessed++
 		}
@@ -67,6 +72,7 @@ func (s *Service) Orchestrate(ctx context.Context, entries []domain.Entry, provi
 
 // entryOutcome is the per-entry result orchestrateEntry reports back to the loop.
 type entryOutcome struct {
+	skipped       bool // already mapped to nodes; left untouched (lazy)
 	processed     bool // split + persist succeeded
 	nodesCreated  int
 	edgesProposed int
@@ -77,6 +83,18 @@ type entryOutcome struct {
 // storage failure that aborts the whole run; provider/validation failures are
 // reported via outcome.queued and leave no partial writes for the entry.
 func (s *Service) orchestrateEntry(ctx context.Context, e domain.Entry, provider ai.AIProvider) (entryOutcome, error) {
+	// Lazy + idempotent: an entry already mapped to nodes is left untouched, so a
+	// re-run neither re-pays the LLM split nor duplicates nodes. Entries are
+	// immutable raw records — their node mapping is created once. The cheap
+	// EXISTS guard runs before the expensive provider.Split.
+	has, err := s.entryHasNodes(ctx, e.ID)
+	if err != nil {
+		return entryOutcome{}, fmt.Errorf("repository: orchestrate entry %s: check existing nodes: %w", e.ID, err)
+	}
+	if has {
+		return entryOutcome{skipped: true}, nil
+	}
+
 	// Step 1 — split (outside the tx; provider may do I/O).
 	drafts, err := provider.Split(ctx, e)
 	if err != nil {
@@ -118,6 +136,19 @@ func (s *Service) orchestrateEntry(ctx context.Context, e domain.Entry, provider
 		nodesCreated:  len(nodes),
 		edgesProposed: len(proposed),
 	}, nil
+}
+
+// entryHasNodes reports whether the entry already maps to ≥1 node, without
+// loading the node rows. Keeps the split step lazy: the guard is one indexed
+// EXISTS lookup, far cheaper than the LLM split call it gates.
+func (s *Service) entryHasNodes(ctx context.Context, entryID string) (bool, error) {
+	var exists int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM entry_node_map WHERE entry_id = ?)`, entryID,
+	).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists != 0, nil
 }
 
 // persistEntryNodes creates the entry's nodes and their entry→node maps in one

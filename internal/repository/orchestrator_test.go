@@ -153,6 +153,43 @@ func TestOrchestrate_InvalidDraft_QueuesAtAggregate(t *testing.T) {
 	}
 }
 
+func TestOrchestrate_LazyIdempotent_SkipsAlreadySplit(t *testing.T) {
+	s := newService(t)
+	c := ctx(t)
+	e := seedActivity(t, s, "split once")
+	provider := mock.New()
+
+	// First run splits + persists.
+	res1, err := s.Orchestrate(c, []domain.Entry{e}, provider)
+	if err != nil {
+		t.Fatalf("run 1: %v", err)
+	}
+	if res1.EntriesProcessed != 1 || res1.NodesCreated != 1 || res1.Skipped != 0 {
+		t.Fatalf("run 1 = %+v, want processed1/nodes1/skipped0", res1)
+	}
+	_, _, _, splitAfter1 := provider.Counts()
+
+	// Second run skips the already-mapped entry: no new nodes, no extra split call.
+	res2, err := s.Orchestrate(c, []domain.Entry{e}, provider)
+	if err != nil {
+		t.Fatalf("run 2: %v", err)
+	}
+	if res2.Skipped != 1 || res2.EntriesProcessed != 0 || res2.NodesCreated != 0 {
+		t.Fatalf("run 2 = %+v, want skipped1/processed0/nodes0", res2)
+	}
+	if _, _, _, splitAfter2 := provider.Counts(); splitAfter2 != splitAfter1 {
+		t.Fatalf("split called on the skip path: %d → %d (lazy guard should gate it)", splitAfter1, splitAfter2)
+	}
+	// Still exactly one node — no duplicate.
+	nodes, nerr := s.NodesForEntry(c, e.ID)
+	if nerr != nil {
+		t.Fatalf("NodesForEntry: %v", nerr)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("entry has %d nodes after re-run, want 1 (no duplicate)", len(nodes))
+	}
+}
+
 func TestOrchestrate_EmptyInput(t *testing.T) {
 	s := newService(t)
 	res, err := s.Orchestrate(ctx(t), nil, mock.New())
