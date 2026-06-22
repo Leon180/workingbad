@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/Leon180/workingbad/compare/v0.15.0...v0.16.0) (2026-06-22)
+
+
+### Features
+
+* **cluster:** cosine + epsilon-ball clustering primitive (Slice F7a) ([#138](https://github.com/Leon180/workingbad/issues/138)) ([b9eb31e](https://github.com/Leon180/workingbad/commit/b9eb31e1129fa77ad234cd26af0038f8d87a85ad))
+
 ## [0.15.0](https://github.com/Leon180/workingbad/compare/v0.14.0...v0.15.0) (2026-06-22)
 
 
