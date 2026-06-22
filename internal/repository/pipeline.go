@@ -353,18 +353,22 @@ func (s *Service) materializeOne(ctx context.Context, seg domain.Segment, provid
 	if len(rawRows) == 0 {
 		return errors.New("repository: segment has no is_current raw_changes")
 	}
-	changes := make([]domain.RawChange, len(rawRows))
+	// Build the content-agnostic Summarize input. ID = ChangeID drives the
+	// mock's deterministic hash. Text carries the patch fingerprint as a
+	// placeholder and is empty for merge commits (PatchID NULL); real
+	// commit-message/diff content is wired with the real provider (F9).
+	items := make([]domain.Summarizable, len(rawRows))
 	var earliestAuthor, latestAuthor time.Time
 	for i, r := range rawRows {
-		ingested, perr := optNSToTime(r.IngestedAt)
-		if perr != nil {
+		// Validate ingested_at parses before committing the tx — a corrupt
+		// nanosecond timestamp is a storage-invariant violation. The value
+		// itself is unused here (Summarizable has no IngestedAt).
+		if _, perr := optNSToTime(r.IngestedAt); perr != nil {
 			return fmt.Errorf("repository: parse raw_change %s ingested_at: %w", r.ChangeID, perr)
 		}
-		changes[i] = domain.RawChange{
-			ChangeID:   r.ChangeID,
-			RepoID:     r.RepoID,
-			PatchID:    nsToString(r.PatchID),
-			IngestedAt: ingested,
+		items[i] = domain.Summarizable{
+			ID:   r.ChangeID,
+			Text: nsToString(r.PatchID),
 		}
 		// earliest_author_time is computed by the SQL — capture the MIN across
 		// the change set so the synthesised activity entry's occurred_at
@@ -382,7 +386,7 @@ func (s *Service) materializeOne(ctx context.Context, seg domain.Segment, provid
 		}
 	}
 
-	title, body, err := provider.Summarize(ctx, changes)
+	title, body, err := provider.Summarize(ctx, items)
 	if err != nil {
 		return fmt.Errorf("provider.Summarize: %w", err)
 	}

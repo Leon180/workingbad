@@ -238,3 +238,14 @@ type RawChange struct {
 	PatchID    string
 	IngestedAt time.Time
 }
+
+// Summarizable is one content-agnostic input to the Summarize step, so the step
+// is not coupled to a source shape (git changes, entries, or nodes all map to
+// it). ID is a stable, content-derived identifier (deterministic ordering/dedup).
+// Text is the human-readable content the model condenses; it may be empty when
+// no source content is available (e.g. merge commits), so providers must handle
+// the empty case.
+type Summarizable struct {
+	ID   string
+	Text string
+}

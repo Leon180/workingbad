@@ -285,7 +285,7 @@ func TestBatchMaterialize_ReMaterializeSupersedes(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	provider.WithSummarizeFunc(func(_ context.Context, _ []domain.RawChange) (string, string, error) {
+	provider.WithSummarizeFunc(func(_ context.Context, _ []domain.Summarizable) (string, string, error) {
 		return "Refreshed conclusion", "different body", nil
 	})
 
@@ -348,7 +348,7 @@ func TestBatchMaterialize_ReMaterialize_PreservesAttachedGoal(t *testing.T) {
 	if _, err := s.db.Exec(`UPDATE segments SET summary_state='stale' WHERE id = ?`, seg.ID); err != nil {
 		t.Fatal(err)
 	}
-	provider.WithSummarizeFunc(func(_ context.Context, _ []domain.RawChange) (string, string, error) {
+	provider.WithSummarizeFunc(func(_ context.Context, _ []domain.Summarizable) (string, string, error) {
 		return "Refreshed activity", "new body", nil
 	})
 	if _, err := s.BatchMaterialize(ctx(t), MaterializeScope{}, provider); err != nil {
